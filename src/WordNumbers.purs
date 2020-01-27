@@ -337,6 +337,8 @@ answerUnsorted n = [before, self, after']
 --    > map answerUnsorted $ fromString "51000000000"
 --    (Just ["sevenhundredthirtytwomil","l","ionsevenhundredninetysixthousandthreehundredsixtysix"])
 --    ```
+-- In this third interpretation of the grammar, we solve the problem in a weakened form, i.e. without
+-- the sorting.
 --
 -- The last part, however, may take a while. The purescript is a strict language and it doesn't
 -- seem to have a lazy ordered map at the moment. We may need to write one.

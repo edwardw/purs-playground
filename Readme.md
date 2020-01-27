@@ -9,4 +9,4 @@ It tries to re-implement a beautiful Haskell program outlined in a series of blo
   - [part 3](http://conway.rutgers.edu/~ccshan/wiki/blog/posts/WordNumbers3/)
   - [part 4](http://conway.rutgers.edu/~ccshan/wiki/blog/posts/WordNumbers4/)
 
-For the logidtic part, this project uses `yarn` and `spago` as being recommended [here](https://discourse.purescript.org/t/recommended-tooling-for-purescript-applications-in-2019/948).
+For the logistic part, this project uses `yarn` and `spago` as being recommended [here](https://discourse.purescript.org/t/recommended-tooling-for-purescript-applications-in-2019/948).
