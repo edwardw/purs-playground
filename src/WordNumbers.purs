@@ -15,7 +15,7 @@ import Data.BigInt (BigInt, fromInt, fromString, toNumber)
 import Data.Either (Either(..), note)
 import Data.Foldable (foldr)
 import Data.Int as Int
-import Data.Lazy (Lazy, defer, force)
+import Data.Lazy (Lazy, force)
 import Data.List.Lazy as ZL
 import Data.Map as M
 import Data.Maybe (Maybe(..))
@@ -279,18 +279,18 @@ instance semiringBinary :: Semiring m => Semiring (Binary m) where
   add b1@(Binary m1 _) b2@(Binary m2 _) =
     Binary
       (m1 + m2)
-      (Just <<< wrap $ (Tuple (defer \_ -> b1)
-                              (defer \_ -> b2)))
+      (Just <<< wrap $ (Tuple (pure b1)
+                              (pure b2)))
   mul b1@(Binary m1 c1) b2@(Binary m2 c2) =
     Binary
       (m1 * m2)
       ( case c1 of
-          Just (Tpl t) -> Just <<< wrap $ Tuple (defer \_ -> force (fst t) * b2)
-                                                (defer \_ -> force (snd t) * b2)
+          Just (Tpl t) -> Just <<< wrap $ Tuple (pure $ force (fst t) * b2)
+                                                (pure $ force (snd t) * b2)
           Nothing -> case c2 of
             Nothing -> Nothing
-            Just (Tpl t) -> Just <<< wrap $ Tuple (defer \_ -> b1 * force (fst t))
-                                                  (defer \_ -> b1 * force (snd t))
+            Just (Tpl t) -> Just <<< wrap $ Tuple (pure $ b1 * force (fst t))
+                                                  (pure $ b1 * force (snd t))
       )
 
 -- We will use these trees to keep track of the count and volume of the productions
@@ -402,25 +402,25 @@ instance semiringZMap :: (Ord k, Semiring v) => Semiring (ZMap k v) where
   mul = undefined
 
 instance functorZMap :: Functor (ZMap k) where
-  map f = wrap <<< map (\x -> (defer \_ -> f $ force x)) <<< unwrap
+  map f = wrap <<< map (map f) <<< unwrap
 
 instance moduleMap :: (Ord k, Eq v, Semiring v) => Module v (ZMap k v) where
   applySecond r (ZMap m)
     | r == zero = wrap M.empty
-    | otherwise = wrap $ map (\x -> defer \_ -> r * (force x)) m
+    | otherwise = wrap $ map (map (r * _)) m
   applyFirst (ZMap m) r
     | r == zero = wrap M.empty
-    | otherwise = wrap $ map (\x -> defer \_ -> (force x) * r) m
+    | otherwise = wrap $ map (map (_ * r)) m
 
 instance characterTrie :: (Semiring m, Character m) => Character (Trie Char m) where
   char c =
     Trie
       { total: r
       , label: zero
-      , children: wrap $ M.singleton c (defer \_ -> Trie { total: r
-                                                         , label: r
-                                                         , children: wrap M.empty
-                                                         })
+      , children: wrap $ M.singleton c (pure $ Trie { total: r
+                                                    , label: r
+                                                    , children: wrap M.empty
+                                                    })
       }
     where
     r = char c
