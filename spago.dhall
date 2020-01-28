@@ -9,9 +9,11 @@ You can edit this file as you like.
     , "effect"
     , "lists"
     , "newtype"
+    , "ordered-collections"
     , "psci-support"
     , "strings"
     , "stringutils"
+    , "typelevel"
     ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]

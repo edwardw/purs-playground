@@ -11,23 +11,28 @@ module WordNumbers where
 
 import Prelude hiding ((*>), (<*))
 import Data.Array as A
-import Data.BigInt (BigInt, fromInt, toNumber)
+import Data.BigInt (BigInt, fromInt, fromString, toNumber)
+import Data.Either (Either(..), note)
 import Data.Foldable (foldr)
 import Data.Int as Int
 import Data.Lazy (Lazy, defer, force)
 import Data.List.Lazy as ZL
+import Data.Map as M
 import Data.Maybe (Maybe(..))
 import Data.Newtype (class Newtype, unwrap, wrap)
 import Data.String as String
 import Data.String.CodeUnits (fromCharArray, toCharArray)
 import Data.String.Utils (words)
 import Data.Tuple (Tuple(..), fst, snd)
+import Data.Typelevel.Undefined (undefined)
 
 -- | Part 1. Write the problem down as a program, specifically, exploring the algebraic
 -- | structure of the problem and expressing it in purescript.
 
 -- A lazy list of string. Helps to overcome the orphan rules.
 newtype ZSL = ZSL (ZL.List (Array Char))
+
+derive instance eqZSL :: Eq ZSL
 
 derive instance newtypeZString :: Newtype ZSL _
 
@@ -149,7 +154,6 @@ ten9 = ten6 + ten3 * string "million" * (one + ten6)
 -- |
 -- | Now the evaluation at x = 1 gives the total length of all strings, as desired.
 -- | That's where the idea of automatic differentiation comes in.
-
 newtype Nat a = Nat a
 type Count = Nat BigInt
 
@@ -241,8 +245,8 @@ instance characterVolume :: Character (Wrap V (Nat BigInt)) where
 --    > (ten9 :: Deriv Count Volume)
 --    Deriv fromString "999999999" fromString "70305000000"
 --    ```
--- This is the second interpretation of grammar of the problem. It makes counting
--- length and total length of all strings in `ten9` very cheap.
+-- This is the second interpretation of the grammar. It makes counting length and
+-- total length of all strings in `ten9` very cheap.
 
 
 -- | Part 3. We will try to solve a slightly easier version of the problem:
@@ -258,6 +262,8 @@ data Binary m =
 newtype Tpl a b = Tpl (Tuple a b)
 
 derive instance newtypeTpl :: Newtype (Tpl a b) _
+
+derive instance eqTpl :: (Eq a, Eq b) => Eq (Tpl a b)
 
 -- Characters create leaf nodes.
 instance characterBinary :: Character m => Character (Binary m) where
@@ -289,7 +295,7 @@ instance semiringBinary :: Semiring m => Semiring (Binary m) where
 
 -- We will use these trees to keep track of the count and volume of the productions
 -- (as in part 2), as well as the list of strings (so that we can see what letter we get).
-type Measure = Tpl ZSL (Deriv Count Volume)
+type MeasureUnsorted = Tpl ZSL (Deriv Count Volume)
 
 instance characterTuple :: (Character a, Character b) => Character (Tpl a b) where
   char c = wrap $ Tuple (char c) (char c)
@@ -300,26 +306,26 @@ instance semiringTuple :: (Semiring a, Semiring b) => Semiring (Tpl a b) where
   add (Tpl t1) (Tpl t2) = wrap $ Tuple (fst t1 + fst t2) (snd t1 + snd t2)
   mul (Tpl t1) (Tpl t2) = wrap $ Tuple (fst t1 * fst t2) (snd t1 * snd t2)
 
-deriv :: Binary Measure -> Deriv Count Volume
+deriv :: Binary MeasureUnsorted -> Deriv Count Volume
 deriv (Binary (Tpl (Tuple _ b)) _) = b
 
 volume :: Deriv Count Volume -> BigInt
 volume (Deriv _ (Wrap (Nat v))) = v
 
-search :: Binary Measure -> BigInt -> Measure
-search (Binary m Nothing) _ = m
-search (Binary _ (Just (Tpl (Tuple a b)))) i
-  | a' <- force a, i < volume (deriv a') = search a' i
+searchUnsorted :: Binary MeasureUnsorted -> BigInt -> MeasureUnsorted
+searchUnsorted (Binary m Nothing) _ = m
+searchUnsorted (Binary _ (Just (Tpl (Tuple a b)))) i
+  | a' <- force a, i < volume (deriv a') = searchUnsorted a' i
   | otherwise = wrap $ Tuple (fst x) (skip + snd x)
     where
     skip = deriv (force a)
-    Tpl x = search (force b) (i - volume skip)
+    Tpl x = searchUnsorted (force b) (i - volume skip)
 
 answerUnsorted :: BigInt -> Array String
 answerUnsorted n = [before, self, after']
   where
     target = n - fromInt 1
-    Tpl (Tuple (ZSL a) b) = search ten9 target
+    Tpl (Tuple (ZSL a) b) = searchUnsorted ten9 target
     end = volume b
     str = case ZL.head a of
       Nothing -> ""
@@ -339,6 +345,236 @@ answerUnsorted n = [before, self, after']
 --    ```
 -- In this third interpretation of the grammar, we solve the problem in a weakened form, i.e. without
 -- the sorting.
+
+
+-- | Part 4. To sort our 999,999,999 strings in alphabetically order, we use a trie:
+-- |              _____
+-- |             /     \
+-- |         'o'/       \'t'
+-- |           /         \
+-- |          |          /\
+-- |       'n'|      'h'/  \'w'
+-- |          |        /    \
+-- |          |       |      |
+-- |       'e'|    'r'|      |'o'
+-- |        "one"     |      |
+-- |                  |    "two"
+-- |               'e'|
+-- |                  |
+-- |                  |
+-- |               'e'|
+-- |                  |
+-- |               "three"
+-- |
+-- | That is, we group the strings by their first letter, then further divide each group of strings
+-- | by their second letter, and so on. The result is a tree whose edges are each labeled by a letter
+-- | and whose nodes are strings. Thus a trie.
+data Trie c m
+  = Trie { total :: m
+         , label :: m
+         , children :: ZMap c (Trie c m)
+         }
+
+derive instance eqTrie :: (Eq c, Eq m) => Eq (Trie c m)
+
+instance showTrie :: (Show c, Show m) => Show (Trie c m) where
+  show (Trie t) =
+    "Trie { total = "
+    <> show t.total
+    <> ", label = "
+    <> show t.label
+    <> ", children = "
+    <> show (unwrap t.children)
+    <> " }"
+
+-- A map with lazy values.
+newtype ZMap k v = ZMap (M.Map k (Lazy v))
+
+derive instance newtypeMap :: Newtype (ZMap k v) _
+
+derive instance eqNTMap :: (Eq c, Eq m) => Eq (ZMap c m)
+
+-- `Data.Lazy.Lazy` is an instance of `Semiring`, so we get `add` for free.
+instance semiringZMap :: (Ord k, Semiring v) => Semiring (ZMap k v) where
+  zero = wrap M.empty
+  one = undefined
+  add (ZMap a) (ZMap b) = wrap $ M.unionWith add a b
+  mul = undefined
+
+instance functorZMap :: Functor (ZMap k) where
+  map f = wrap <<< map (\x -> (defer \_ -> f $ force x)) <<< unwrap
+
+instance moduleMap :: (Ord k, Eq v, Semiring v) => Module v (ZMap k v) where
+  applySecond r (ZMap m)
+    | r == zero = wrap M.empty
+    | otherwise = wrap $ map (\x -> defer \_ -> r * (force x)) m
+  applyFirst (ZMap m) r
+    | r == zero = wrap M.empty
+    | otherwise = wrap $ map (\x -> defer \_ -> (force x) * r) m
+
+instance characterTrie :: (Semiring m, Character m) => Character (Trie Char m) where
+  char c =
+    Trie
+      { total: r
+      , label: zero
+      , children: wrap $ M.singleton c (defer \_ -> Trie { total: r
+                                                         , label: r
+                                                         , children: wrap M.empty
+                                                         })
+      }
+    where
+    r = char c
+
+instance semiringTrie :: (Ord c, Eq m, Semiring m) => Semiring (Trie c m) where
+  -- Be careful, in the original post, the `Monoid` and `Seminearring` are
+  -- defined separately. The `Monoid` type class defines `zero` and `add`,
+  -- whereas the `Seminearring` defines `one` and `mul`. If the following
+  -- `children` field were to be set as `zero`, there would be a circular
+  -- definition. It would blow up the stack right away.
+  -- Should the compiler treat such circular definition as error?
+  zero = Trie { total: zero, label: zero, children: wrap M.empty }
+  one = Trie { total: one, label: one, children: wrap M.empty }
+  add (Trie t1) (Trie t2) =
+    Trie
+      { total: t1.total + t2.total
+      , label: t1.label + t2.label
+      , children: t1.children + t2.children
+      }
+  mul (Trie t1) r@(Trie t2) =
+    Trie
+      { total: t1.total * t2.total
+      , label: t1.label * t2.label
+      , children: (t1.children <* r) + (r' *> t2.children)
+      }
+    where
+    r' = Trie { total: t1.label
+              , label: t1.label
+              , children: wrap M.empty
+              } :: Trie c m
+
+search :: forall m. Semiring m
+       => (m -> Boolean)
+       -> Trie Char m
+       -> Either String (Tuple String m)
+search stop = searchTrie ZL.nil zero
+  where
+  searchTrie cs m (Trie t)
+    | m' <- m + t.label, stop m' =
+      Right $ Tuple (fromCharArray $ ZL.toUnfoldable $ ZL.reverse cs) m'
+    | m' <- m + t.label, otherwise =
+      searchMap cs m' (M.toUnfoldable $ unwrap t.children)
+
+  searchMap cs m cts = case ZL.uncons cts of
+    Just { head: Tuple c t, tail } ->
+      if stop m' then
+        searchTrie (c ZL.: cs) m ft
+      else
+        searchMap cs m' tail
+      where
+      ft@(Trie t') = force t
+      m' = m + t'.total
+    Nothing -> Left "Fell off the edge of a child list"
+
+-- Progress checking:
 --
--- The last part, however, may take a while. The purescript is a strict language and it doesn't
--- seem to have a lazy ordered map at the moment. We may need to write one.
+--    ```
+--    > import Prelude
+--    > import Data.BigInt
+--    > import Data.Either (note)
+--    > import WordNumbers
+--    > note "" (fromString "51000000000") >>= \i -> search ((_ >= i) <<< volume) ten9
+--    (Right (Tuple "sixhundredseventysixmillionsevenhundredfortysixthousandfivehundredseventyfive" Deriv fromString "723302492" fromString "51000000000"))
+--
+-- It works smoothly! But there's more to the original problem:
+--
+--    Which one, and what is the sum of all the integers to that point?
+--
+-- To answer that, we need to keep track of the sum of a set of integers in addition to count and volume.
+-- We call this sum the *mass*. Luckily for us. the same derivative trick also works here:
+--
+--    ["one","two","three","four",...]
+--
+-- can be treated as a polynomial of two variables x and y, whose first few terms are:
+--
+--    x^3y^1 + x^3y^2 + x^5y^3 + x^4y^4 + ...
+--
+-- If we evaluate its derivative with respect to y at x = y = 1, we get the mass.
+data M
+
+type Mass = Wrap M (Nat BigInt)
+
+type Measure = Deriv Count (Tpl Volume Mass)
+
+instance moduleTpl :: (Module r a, Module r b) => Module r (Tpl a b) where
+  applySecond r (Tpl (Tuple a b)) =
+    wrap $ Tuple (r *> a) (r *> b)
+  applyFirst (Tpl (Tuple a b)) r =
+    wrap $ Tuple (a <* r) (b <* r)
+
+-- A letter by itself has no mass.
+instance characterMass :: Character (Wrap M (Nat BigInt)) where
+  char _ = zero
+
+-- A new semiring to track the order of the strings and assigns the first string in the list the mass 0,
+-- the second the mass 1, and so on.
+newtype Numbered c = Numbered (Trie c Measure)
+
+instance characterNumbered :: Character (Numbered Char) where
+  char = Numbered <<< char
+
+-- When adding two lists of strings together, the mass of each string in the second list increases
+-- by the number of strings in the first list.
+-- When multiplying, the mass of each string in the first list is scaled by the number of strings
+-- in the second list.
+instance semiringNumbered :: Ord c => Semiring (Numbered c) where
+  zero = Numbered zero
+  one = Numbered one
+  add (Numbered a) (Numbered b) =
+    Numbered (a + map f b)
+    where
+    Trie a' = a
+    Deriv n _ = a'.total
+    f (Deriv c (Tpl (Tuple v m))) = Deriv c (Tpl (Tuple v (Wrap (c * n) + m)))
+  mul (Numbered a) (Numbered b) =
+    Numbered (map f a * b)
+    where
+    Trie b' = b
+    Deriv n _ = b'.total
+    f (Deriv c (Tpl (Tuple v m))) = Deriv c (Tpl (Tuple v (m <* n)))
+
+instance functorTrie :: Functor (Trie c) where
+  map f (Trie { total, label, children }) =
+    Trie
+      { total: f total
+      , label: f label
+      , children: map (map f) children
+      }
+
+-- Finally, we are near the end of the journey. One detail: because our list of strings begins at “one”
+-- rather than “zero”, we prepend an empty string (“one +”) to correct the masses.
+answer :: Either String (Tuple String BigInt)
+answer = note "Wrong big integer?" (fromString "51000000000") >>= answer'
+  where
+  answer' target =
+    let
+      Numbered grammar = one + ten9
+      vol (Deriv _ (Tpl (Tuple (Wrap (Nat n)) _))) = n
+      mass (Deriv _ (Tpl (Tuple _ (Wrap (Nat n))))) = n
+      stop m = vol m >= target
+      g (Tuple it m) =
+        if target == vol m then
+          Right $ Tuple it (mass m)
+        else
+          Left "The target letter does not end a string"
+    in search stop grammar >>= g
+
+-- The fourth and the final interpretation solves the problem in full.
+--
+-- This is pretty satisfying. Only the polynomial interpretation of a list of strings, the automatic
+-- derivative, and the abstract algebra all coming together enables such an elegant solution. In the
+-- end, one can't stop wondering what is data and what is program? The boundary is blurred. And is
+-- this a manifestation of the Curry-Howard correspondence? The functions here can't be run in our
+-- head any more, or at least very difficult to do; they read more like mathematical equations and
+-- theorems now.
+--
+-- QED.
