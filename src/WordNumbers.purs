@@ -577,4 +577,8 @@ answer = note "Wrong big integer?" (fromString "51000000000") >>= answer'
 -- head any more, or at least very difficult to do; they read more like mathematical equations and
 -- theorems now.
 --
+-- Also, in this setting, the lazy evaluation is crucial. Contrary to what I have led to believe,
+-- the laziness *saves* memory here. In part 3 and 4, the binary tree and ordered map have to be
+-- sprinkled with `Lazy` type, otherwise gc error ensues.
+--
 -- QED.
