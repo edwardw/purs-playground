@@ -285,12 +285,12 @@ instance semiringBinary :: Semiring m => Semiring (Binary m) where
     Binary
       (m1 * m2)
       ( case c1 of
-          Just (Tpl t) -> Just <<< wrap $ Tuple (pure $ force (fst t) * b2)
-                                                (pure $ force (snd t) * b2)
+          Just (Tpl (Tuple b11 b12)) -> Just <<< wrap $ Tuple (map (_ * b2) b11)
+                                                              (map (_ * b2) b12)
           Nothing -> case c2 of
             Nothing -> Nothing
-            Just (Tpl t) -> Just <<< wrap $ Tuple (pure $ b1 * force (fst t))
-                                                  (pure $ b1 * force (snd t))
+            Just (Tpl (Tuple b21 b22)) -> Just <<< wrap $ Tuple (map (b1 * _) b21)
+                                                                (map (b1 * _) b22)
       )
 
 -- We will use these trees to keep track of the count and volume of the productions
