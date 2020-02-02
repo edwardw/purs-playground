@@ -11,9 +11,9 @@ You can edit this file as you like.
     , "newtype"
     , "ordered-collections"
     , "psci-support"
-    , "spec"
     , "strings"
     , "stringutils"
+    , "test-unit"
     , "typelevel"
     ]
 , packages = ./packages.dhall
