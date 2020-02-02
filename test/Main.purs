@@ -16,7 +16,7 @@ import Test.Spec (describe, it)
 import Test.Spec.Assertions (shouldEqual)
 import Test.Spec.Reporter.Console (consoleReporter)
 import Test.Spec.Runner (runSpec)
-import WordNumbers
+import WordNumbers (Count, Deriv(..), Nat(..), Volume, Wrap(..), ZSL, answer, answerUnsorted, ten6, ten9)
 
 fromString' :: String -> BigInt
 fromString' = fromMaybe (fromInt 0) <<< fromString

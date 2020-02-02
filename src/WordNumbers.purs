@@ -12,13 +12,13 @@ module WordNumbers where
 import Prelude hiding ((*>), (<*))
 import Data.Array as A
 import Data.BigInt (BigInt, fromInt, fromString, toNumber)
-import Data.Either (Either(..), note)
+import Data.Either (Either(..))
 import Data.Foldable (foldr)
 import Data.Int as Int
 import Data.Lazy (Lazy, force)
 import Data.List.Lazy as ZL
 import Data.Map as M
-import Data.Maybe (Maybe(..), maybe)
+import Data.Maybe (Maybe(..), fromMaybe, maybe)
 import Data.Newtype (class Newtype, over, over2, wrap, unwrap)
 import Data.String as String
 import Data.String.CodeUnits (fromCharArray, toCharArray)
@@ -542,20 +542,18 @@ instance functorTrie :: Functor (Trie c) where
 -- Finally, we are near the end of the journey. One detail: because our list of strings begins at “one”
 -- rather than “zero”, we prepend an empty string (“one +”) to correct the masses.
 answer :: Either String (Tuple String BigInt)
-answer = note "Wrong big integer?" (fromString "51000000000") >>= answer'
+answer = search stop grammar >>= g
   where
-  answer' target =
-    let
-      Numbered grammar = one + ten9
-      vol (Deriv _ (Tpl (Tuple (Wrap (Nat n)) _))) = n
-      mass (Deriv _ (Tpl (Tuple _ (Wrap (Nat n))))) = n
-      stop m = vol m >= target
-      g (Tuple it m) =
-        if target == vol m then
-          Right $ Tuple it (mass m)
-        else
-          Left "The target letter does not end a string"
-    in search stop grammar >>= g
+  target = fromMaybe (fromInt 0) (fromString "51000000000")
+  Numbered grammar = one + ten9
+  vol (Deriv _ (Tpl (Tuple (Wrap (Nat n)) _))) = n
+  mass (Deriv _ (Tpl (Tuple _ (Wrap (Nat n))))) = n
+  stop m = vol m >= target
+  g (Tuple it m) =
+    if target == vol m then
+      Right $ Tuple it (mass m)
+    else
+      Left "The target letter does not end a string"
 
 -- The fourth and the final interpretation solves the problem in full.
 --
