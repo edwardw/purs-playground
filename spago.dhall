@@ -11,6 +11,7 @@ You can edit this file as you like.
     , "newtype"
     , "ordered-collections"
     , "psci-support"
+    , "spec"
     , "strings"
     , "stringutils"
     , "typelevel"
