@@ -4,12 +4,11 @@ import Prelude
 import Data.Either (Either(..))
 import Data.Map as M
 import Effect (Effect)
+import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, term)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
 import Text.Parsing.Parser (runParser)
-import Main (Term(..), LambdaLine(..), eval, line, norm, term)
-
 
 main :: Effect Unit
 main = runTest do
