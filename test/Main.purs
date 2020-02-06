@@ -41,7 +41,7 @@ main = runTest do
       Assert.equal
         (runParser "(λx -> x)y" line)
         (Right $ Run (App (Lam "x" (Var "x")) (Var "y")))
-    test "evaluation and normal form" do
+    test "eval and normal forms" do
       Assert.equal
         (eval M.empty <$> runParser "(λx -> x)z" term)
         (Right $ Var "z")

@@ -1,19 +1,15 @@
--- https://crypto.stanford.edu/~blynn/lambda/
-
 module Main where
 
 import Prelude
 import Data.Either (Either(..))
 import Data.Map as M
-import Data.Maybe (Maybe(..), fromMaybe)
-import Data.String.CodeUnits (fromCharArray, toCharArray)
 import Effect (Effect)
 import Effect.Console (log, logShow)
 import LambdaCalculus (LambdaLine(..), Env, line, norm)
-import Node.ReadLine as NR
+import Node.ReadLine as RL
 import Text.Parsing.Parser (runParser)
 
-repl :: NR.Interface -> Env -> NR.LineHandler Unit
+repl :: RL.Interface -> Env -> RL.LineHandler Unit
 repl console env s = do
   case runParser s line of
     Left err -> do
@@ -27,13 +23,13 @@ repl console env s = do
     Right (Let v t) -> do
       prompt console <<< repl console $ M.insert v t env
 
-prompt :: NR.Interface -> NR.LineHandler Unit -> Effect Unit
+prompt :: RL.Interface -> RL.LineHandler Unit -> Effect Unit
 prompt console handler = do
-  NR.prompt console
-  NR.setLineHandler console handler
+  RL.prompt console
+  RL.setLineHandler console handler
 
 main :: Effect Unit
 main = do
-  console <- NR.createConsoleInterface NR.noCompletion
-  NR.setPrompt "> " 2 console
+  console <- RL.createConsoleInterface RL.noCompletion
+  RL.setPrompt "> " 2 console
   prompt console $ repl console M.empty
