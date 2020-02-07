@@ -131,7 +131,7 @@ eval _ t                                    = t
 --    (λ. t) u ~> ↑(-1,0)(t[0 := ↑(1,0)u])
 --
 beta :: Term -> String -> Term -> Term
-beta t v u = shift (-1) 0 $ subst t v 0 (shift 1 0 u)
+beta t v u = shift (-1) 0 <<< subst t v 0 $ shift 1 0 u
 
 -- De Bruijn Substitution: The substitution of a term `s` for variable number
 -- `j` in a term `t`, written `t[j := s]`, is defined as follows:

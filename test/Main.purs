@@ -2,8 +2,10 @@ module Test.Main where
 
 import Prelude
 import Data.Either (Either(..), fromRight)
+import Data.Foldable (foldr)
 import Data.Tuple (Tuple(..))
 import Data.Map as M
+import Data.Unfoldable (replicate)
 import Effect (Effect)
 import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, term)
 import Partial.Unsafe (unsafePartial)
@@ -100,18 +102,10 @@ main = runTest do
                                , Tuple "3" thr
                                , Tuple "exp" exp
                                ]
+      let apps = replicate 8 (App (Var "x" 1)) :: Array (Term -> Term)
+      let res  = foldr identity (Var "x" 0) apps
       Assert.equal
-        (Right (Lam "x"
-                    (Lam "x"
-                         (App (Var "x" 1)
-                              (App (Var "x" 1)
-                                   (App (Var "x" 1)
-                                        (App (Var "x" 1)
-                                             (App (Var "x" 1)
-                                                  (App (Var "x" 1)
-                                                       (App (Var "x" 1)
-                                                            (App (Var "x" 1)
-                                                                 (Var "x" 0))))))))))))
+        (Right (Lam "x" (Lam "x" res)))
         (norm env <$> runParser "exp 2 3" term)
     test "factorial" do
       -- true = \x y -> x
@@ -124,7 +118,7 @@ main = runTest do
       -- is0 = \n -> n (\x -> false) true
       -- Y = \f -> (\x -> x x)(\x -> f(x x))
       -- fact = Y(\f n -> (is0 n) 1 (mul n (f (pred n))))
-      -- fact (succ (succ 1))  -- Compute 3!
+      -- fact (succ (succ (succ 1)))  -- Compute 4!
       let t    = unsafePartial fromRight $ runParser "λx y -> x" term
       let f    = unsafePartial fromRight $ runParser "λx y -> y" term
       let zero = unsafePartial fromRight $ runParser "λf x -> x" term
@@ -135,25 +129,19 @@ main = runTest do
       let is0  = unsafePartial fromRight $ runParser "λn -> n (λx -> false) true" term
       let _Y   = unsafePartial fromRight $ runParser "λf -> (λx -> x x)(λx -> f(x x))" term
       let fact = unsafePartial fromRight $ runParser "Y(λf n -> (is0 n) 1 (mul n (f (pred n))))" term
-      let env = M.fromFoldable [ Tuple "true" t
-                               , Tuple "false" f
-                               , Tuple "0" zero
-                               , Tuple "1" one
-                               , Tuple "succ" succ
-                               , Tuple "pred" pred
-                               , Tuple "mul" mul
-                               , Tuple "is0" is0
-                               , Tuple "Y" _Y
-                               , Tuple "fact" fact
-                               ]
+      let env  = M.fromFoldable [ Tuple "true" t
+                                , Tuple "false" f
+                                , Tuple "0" zero
+                                , Tuple "1" one
+                                , Tuple "succ" succ
+                                , Tuple "pred" pred
+                                , Tuple "mul" mul
+                                , Tuple "is0" is0
+                                , Tuple "Y" _Y
+                                , Tuple "fact" fact
+                                ]
+      let apps = replicate 24 (App (Var "f" 1)) :: Array (Term -> Term)
+      let res  = foldr identity (Var "x" 0) apps
       Assert.equal
-        (Right (Lam "f"
-                    (Lam "x"
-                         (App (Var "f" 1)
-                              (App (Var "f" 1)
-                                   (App (Var "f" 1)
-                                        (App (Var "f" 1)
-                                             (App (Var "f" 1)
-                                                  (App (Var "f" 1)
-                                                       (Var "x" 0))))))))))
-        (norm env <$> runParser "fact (succ (succ 1))" term)
+        (Right (Lam "f" (Lam "x" res)))
+        (norm env <$> runParser "fact (succ (succ (succ 1)))" term)
