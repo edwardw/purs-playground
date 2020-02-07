@@ -31,5 +31,5 @@ prompt console handler = do
 main :: Effect Unit
 main = do
   console <- RL.createConsoleInterface RL.noCompletion
-  RL.setPrompt "> " 2 console
+  RL.setPrompt "λ> " 3 console
   prompt console $ repl console M.empty
