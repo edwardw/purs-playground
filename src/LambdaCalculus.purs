@@ -19,7 +19,6 @@ import Data.Map (Map, lookup)
 import Data.Map as M
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String.CodeUnits (fromCharArray)
-import Data.Tuple (Tuple(..))
 import Text.Parsing.Parser (Parser)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
@@ -123,22 +122,47 @@ type Env = Map String Term
 eval :: Env -> Term -> Term
 eval env (App (Var "quote" _) t)            = quote env t
 eval env (App m a) | Lam v f <- eval env m  =
-  eval env $ beta env (Tuple v a) 0 f
+  eval env $ beta f v a
 eval env (Var v _) | Just x <- lookup v env = eval env x
 eval _ t                                    = t
 
--- The 3rd argument is the number of binders seen so far.
-beta :: Env -> Tuple String Term -> Int -> Term -> Term
-beta env (Tuple v a) ix t = case t of
-  Var s i | s == v && i == ix -> case a of
-                                   Var x _   -> Var x i
-                                   otherwise -> a
-          | otherwise         -> Var s i
-  Lam s m | s == v        -> Lam s m
-          | otherwise     -> Lam s (rec (ix+1) m)
-  App m n                 -> App (rec ix m) (rec ix n)
-  where
-  rec = beta env (Tuple v a)
+-- Beta reduction under De Bruijn Index:
+--
+--    (λ. t) u ~> ↑(-1,0)(t[0 := ↑(1,0)u])
+--
+beta :: Term -> String -> Term -> Term
+beta t v u = shift (-1) 0 $ subst t v 0 (shift 1 0 u)
+
+-- De Bruijn Substitution: The substitution of a term `s` for variable number
+-- `j` in a term `t`, written `t[j := s]`, is defined as follows:
+--
+--    k[j := s]       =  | s  if k = j
+--                       | k  otherwise
+--    (λ. t)[j := s]  =  λ. t[j+1 := ↑(1,0)s]
+--    (t u)[j := s]   =  (t[j := s]  u[j := s])
+--
+subst :: Term -> String -> Int -> Term -> Term
+subst t v j s = case t of
+  Var x k | x == v && k == j -> s
+          | otherwise        -> t
+  Lam x m | x == v           -> t
+          | otherwise        -> Lam x (subst m v (j+1) (shift 1 0 s))
+  App m n                    -> App (subst m v j s) (subst n v j s)
+
+-- De Bruijn Shifting: The `d`-place shift of a term t above cutoff `c`, written
+-- `↑(d,c)t`, is defined as follows:
+--
+--    ↑(d,c)k       =  | k     if k < c
+--                     | k + d if k >= c
+--    ↑(d,c)(λ. t)  =  λ. ↑(d,c+1)t
+--    ↑(d,c)(t u)   =  (↑(d,c)t ↑(d,c)u)
+--
+shift :: Int -> Int -> Term -> Term
+shift d c t = case t of
+  Var s k | k < c     -> Var s k
+          | otherwise -> Var s (k+d)
+  Lam s t'            -> Lam s $ shift d (c+1) t'
+  App m n             -> App (shift d c m) (shift d c n)
 
 norm :: Env -> Term -> Term
 norm env t = case eval env t of
