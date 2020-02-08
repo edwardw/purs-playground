@@ -1,14 +1,14 @@
 module Test.Main where
 
 import Prelude
-import Data.Either (Either(..), fromRight)
+import Data.Either (Either(..))
 import Data.Foldable (foldr)
 import Data.Tuple (Tuple(..))
 import Data.Map as M
+import Data.Traversable (sequence)
 import Data.Unfoldable (replicate)
 import Effect (Effect)
 import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, term)
-import Partial.Unsafe (unsafePartial)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -95,18 +95,18 @@ main = runTest do
       -- 3 = \f x -> f (f (f x))
       -- exp = \m n -> n m
       -- exp 2 3  -- Compute 2^3.
-      let two = unsafePartial fromRight $ runParser "λf x -> f (f x)" term
-      let thr = unsafePartial fromRight $ runParser "λf x -> f (f (f x))" term
-      let exp = unsafePartial fromRight $ runParser "λm n -> n m" term
-      let env = M.fromFoldable [ Tuple "2" two
-                               , Tuple "3" thr
-                               , Tuple "exp" exp
-                               ]
+      let two = runParser "λf x -> f (f x)" term
+      let thr = runParser "λf x -> f (f (f x))" term
+      let exp = runParser "λm n -> n m" term
+      let env = sequence $ M.fromFoldable [ Tuple "2" two
+                                          , Tuple "3" thr
+                                          , Tuple "exp" exp
+                                          ]
       let apps = replicate 8 (App (Var "x" 1)) :: Array (Term -> Term)
       let res  = foldr identity (Var "x" 0) apps
       Assert.equal
         (Right (Lam "x" (Lam "x" res)))
-        (norm env <$> runParser "exp 2 3" term)
+        (norm <$> env <*> runParser "exp 2 3" term)
     test "factorial" do
       -- true = \x y -> x
       -- false = \x y -> y
@@ -119,67 +119,65 @@ main = runTest do
       -- Y = \f -> (\x -> x x)(\x -> f(x x))
       -- fact = Y(\f n -> (is0 n) 1 (mul n (f (pred n))))
       -- fact (succ (succ (succ 1)))  -- Compute 4!
-      let t    = unsafePartial fromRight $ runParser "λx y -> x" term
-      let f    = unsafePartial fromRight $ runParser "λx y -> y" term
-      let zero = unsafePartial fromRight $ runParser "λf x -> x" term
-      let one  = unsafePartial fromRight $ runParser "λf x -> f x" term
-      let succ = unsafePartial fromRight $ runParser "λn f x -> f(n f x)" term
-      let pred = unsafePartial fromRight $ runParser "λn f x -> n(λg h -> h (g f)) (λu -> x) (λu ->u)" term
-      let mul  = unsafePartial fromRight $ runParser "λm n f -> m(n f)" term
-      let is0  = unsafePartial fromRight $ runParser "λn -> n (λx -> false) true" term
-      let _Y   = unsafePartial fromRight $ runParser "λf -> (λx -> x x)(λx -> f(x x))" term
-      let fact = unsafePartial fromRight $ runParser "Y(λf n -> (is0 n) 1 (mul n (f (pred n))))" term
-      let env  = M.fromFoldable [ Tuple "true" t
-                                , Tuple "false" f
-                                , Tuple "0" zero
-                                , Tuple "1" one
-                                , Tuple "succ" succ
-                                , Tuple "pred" pred
-                                , Tuple "mul" mul
-                                , Tuple "is0" is0
-                                , Tuple "Y" _Y
-                                , Tuple "fact" fact
-                                ]
+      let t    = runParser "λx y -> x" term
+      let f    = runParser "λx y -> y" term
+      let zero = runParser "λf x -> x" term
+      let one  = runParser "λf x -> f x" term
+      let succ = runParser "λn f x -> f(n f x)" term
+      let pred = runParser "λn f x -> n(λg h -> h (g f)) (λu -> x) (λu ->u)" term
+      let mul  = runParser "λm n f -> m(n f)" term
+      let is0  = runParser "λn -> n (λx -> false) true" term
+      let _Y   = runParser "λf -> (λx -> x x)(λx -> f(x x))" term
+      let fact = runParser "Y(λf n -> (is0 n) 1 (mul n (f (pred n))))" term
+      let env  = sequence $ M.fromFoldable [ Tuple "true" t
+                                           , Tuple "false" f
+                                           , Tuple "0" zero
+                                           , Tuple "1" one
+                                           , Tuple "succ" succ
+                                           , Tuple "pred" pred
+                                           , Tuple "mul" mul
+                                           , Tuple "is0" is0
+                                           , Tuple "Y" _Y
+                                           , Tuple "fact" fact
+                                           ]
       let apps = replicate 24 (App (Var "f" 1)) :: Array (Term -> Term)
       let res  = foldr identity (Var "x" 0) apps
       Assert.equal
         (Right (Lam "f" (Lam "x" res)))
-        (norm env <$> runParser "fact (succ (succ (succ 1)))" term)
+        (norm <$> env <*> runParser "fact (succ (succ (succ 1)))" term)
     test "quote" do
-      let var = unsafePartial fromRight $ runParser "λm.λa b c.a m" term
-      let app = unsafePartial fromRight $ runParser "λm n.λa b c.b m n" term
-      let lam = unsafePartial fromRight $ runParser "λf.λa b c.c f" term
-      let env = M.fromFoldable [ Tuple "Var" var
-                               , Tuple "App" app
-                               , Tuple "Lam" lam
-                               ]
-      let expected = norm env <$> runParser "App (Lam (λy.Var y)) (Var x)" term
-      let quoted = norm env <$> runParser "quote ((λy.y) x)" term
+      let var = runParser "λm.λa b c.a m" term
+      let app = runParser "λm n.λa b c.b m n" term
+      let lam = runParser "λf.λa b c.c f" term
+      let env = sequence $ M.fromFoldable [ Tuple "Var" var
+                                          , Tuple "App" app
+                                          , Tuple "Lam" lam
+                                          ]
+      let expected = norm <$> env <*> runParser "App (Lam (λy.Var y)) (Var x)" term
+      let quoted = norm <$> env <*> runParser "quote ((λy.y) x)" term
       Assert.equal expected quoted
     test "quoted self-interpreter and self-reducer" do
-      let _Y = unsafePartial fromRight $ runParser "λf.(λx.f(x x))(λx.f(x x))" term
-      let _E = unsafePartial fromRight $ runParser "Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))" term
-      let _P = unsafePartial fromRight $ runParser "Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))" term
-      let _RR = unsafePartial fromRight $
-                runParser "Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))" term
-      let _R = unsafePartial fromRight $ runParser "λm.RR m (λa b.b)" term
-      let one = unsafePartial fromRight $ runParser "λf x.f x" term
-      let succ = unsafePartial fromRight $ runParser "λn f x.f(n f x)" term
-      let env = M.fromFoldable [ Tuple "Y" _Y
-                               , Tuple "E" _E
-                               , Tuple "P" _P
-                               , Tuple "RR" _RR
-                               , Tuple "R" _R
-                               , Tuple "1" one
-                               , Tuple "succ" succ
-                               ]
+      let _Y   = runParser "λf.(λx.f(x x))(λx.f(x x))" term
+      let _E   = runParser "Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))" term
+      let _P   = runParser "Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))" term
+      let _RR  = runParser "Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))" term
+      let _R   = runParser "λm.RR m (λa b.b)" term
+      let one  = runParser "λf x.f x" term
+      let succ = runParser "λn f x.f(n f x)" term
+      let env = sequence $ M.fromFoldable [ Tuple "Y" _Y
+                                          , Tuple "E" _E
+                                          , Tuple "P" _P
+                                          , Tuple "RR" _RR
+                                          , Tuple "R" _R
+                                          , Tuple "1" one
+                                          , Tuple "succ" succ
+                                          ]
       let res1 = foldr identity (Var "v" 0) $
                  (replicate 4 (App (Var "v" 1)) :: Array (Term -> Term))
-      let res2 = unsafePartial fromRight $
-                 runParser "λa b c.c(λw a b c.c(λw1 a b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.a w1))))))" term
+      let res2 = runParser "λa b c.c(λw a b c.c(λw1 a b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.a w1))))))" term
       Assert.equal
         (Right (Lam "v" (Lam "v" res1)))
-        (norm env <$> runParser "E (quote (succ (succ (succ 1))))" term)
+        (norm <$> env <*> runParser "E (quote (succ (succ (succ 1))))" term)
       Assert.equal
-        (Right res2)
-        (norm env <$> runParser "R (quote (succ (succ (succ 1))))" term)
+        res2
+        (norm <$> env <*> runParser "R (quote (succ (succ (succ 1))))" term)
