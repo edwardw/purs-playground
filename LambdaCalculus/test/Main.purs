@@ -145,3 +145,41 @@ main = runTest do
       Assert.equal
         (Right (Lam "f" (Lam "x" res)))
         (norm env <$> runParser "fact (succ (succ (succ 1)))" term)
+    test "quote" do
+      let var = unsafePartial fromRight $ runParser "λm.λa b c.a m" term
+      let app = unsafePartial fromRight $ runParser "λm n.λa b c.b m n" term
+      let lam = unsafePartial fromRight $ runParser "λf.λa b c.c f" term
+      let env = M.fromFoldable [ Tuple "Var" var
+                               , Tuple "App" app
+                               , Tuple "Lam" lam
+                               ]
+      let expected = norm env <$> runParser "App (Lam (λy.Var y)) (Var x)" term
+      let quoted = norm env <$> runParser "quote ((λy.y) x)" term
+      Assert.equal expected quoted
+    test "quoted self-interpreter and self-reducer" do
+      let _Y = unsafePartial fromRight $ runParser "λf.(λx.f(x x))(λx.f(x x))" term
+      let _E = unsafePartial fromRight $ runParser "Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))" term
+      let _P = unsafePartial fromRight $ runParser "Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))" term
+      let _RR = unsafePartial fromRight $
+                runParser "Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))" term
+      let _R = unsafePartial fromRight $ runParser "λm.RR m (λa b.b)" term
+      let one = unsafePartial fromRight $ runParser "λf x.f x" term
+      let succ = unsafePartial fromRight $ runParser "λn f x.f(n f x)" term
+      let env = M.fromFoldable [ Tuple "Y" _Y
+                               , Tuple "E" _E
+                               , Tuple "P" _P
+                               , Tuple "RR" _RR
+                               , Tuple "R" _R
+                               , Tuple "1" one
+                               , Tuple "succ" succ
+                               ]
+      let res1 = foldr identity (Var "v" 0) $
+                 (replicate 4 (App (Var "v" 1)) :: Array (Term -> Term))
+      let res2 = unsafePartial fromRight $
+                 runParser "λa b c.c(λw a b c.c(λw1 a b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.a w1))))))" term
+      Assert.equal
+        (Right (Lam "v" (Lam "v" res1)))
+        (norm env <$> runParser "E (quote (succ (succ (succ 1))))" term)
+      Assert.equal
+        (Right res2)
+        (norm env <$> runParser "R (quote (succ (succ (succ 1))))" term)

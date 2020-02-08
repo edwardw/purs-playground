@@ -13,7 +13,7 @@ module LambdaCalculus
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
-import Data.Array (many, some, (!!))
+import Data.Array (many, some)
 import Data.Foldable (foldl, foldr)
 import Data.Map (Map, lookup)
 import Data.Map as M
@@ -59,7 +59,13 @@ data Term
   | App Term Term
   | Lam String Term
 
-derive instance eqTerm :: Eq Term
+-- Under De Bruijn Index, when it comes to equality, variable names don't matter,
+-- only their indices do.
+instance eqTerm :: Eq Term where
+  eq (Var _ i1) (Var _ i2)   = i1 == i2
+  eq (App a1 a2) (App b1 b2) = a1 == b1 && a2 == b2
+  eq (Lam _ t1) (Lam _ t2)   = t1 == t2
+  eq _ _                     = false
 
 instance showTerm :: Show Term where
   show (Lam s t) = "λ" <> s <> "." <> showB t
@@ -119,12 +125,23 @@ line = between ws eof $ option Blank $
 -- To remember already defined *let* statements.
 type Env = Map String Term
 
+-- The `eval` function terminates once no more top-level β-reductions are possible.
 eval :: Env -> Term -> Term
 eval env (App (Var "quote" _) t)            = quote env t
 eval env (App m a) | Lam v f <- eval env m  =
   eval env $ beta f v a
 eval env (Var v _) | Just x <- lookup v env = eval env x
 eval _ t                                    = t
+
+-- Recursively call `eval` on child nodes to reduce other function applications
+-- throughout the tree, resulting in the *normal form* of the lambda term.
+norm :: Env -> Term -> Term
+norm env t = case eval env t of
+    Var v i -> Var v i
+    Lam v m -> Lam v (rec m)
+    App m n -> App (rec m) (rec n)
+    where
+    rec = norm env
 
 -- Beta reduction under De Bruijn Index:
 --
@@ -164,24 +181,30 @@ shift d c t = case t of
   Lam s t'            -> Lam s $ shift d (c+1) t'
   App m n             -> App (shift d c m) (shift d c n)
 
-norm :: Env -> Term -> Term
-norm env t = case eval env t of
-    Var v i -> Var v i
-    Lam v m -> Lam v (rec m)
-    App m n -> App (rec m) (rec n)
-    where
-    rec = norm env
-
+-- In "Efficient Self-Interpretation in Lambda Calculus", Mogensen describes a
+-- self-encoding of lambda terms. If we denote the encoding of a term `T` with
+-- `[T]`, then we can recursively encode any term with the following rules:
+--
+--    ```
+--    [x]    = λabc.ax        ~> shift 3 0 x
+--    [MN]   = λabc.b[M][N]   ~> shift 3 0 [M] && shift 3 0 [N]
+--    [λx.M] = λabc.c(λx.[M]) ~> M is already under one binder,
+--                               thus the cutoff should be 1:
+--                               shift 3 1 [M]
+--    ```
+--
+-- We also need to shift the encoded term accordingly to maintain the invariant
+-- under De Bruijn Index.
+--
 quote :: Env -> Term -> Term
 quote env t = case t of
   Var x _ | Just t' <- lookup x env -> rec t'
-          | otherwise               -> f 0 (\v -> App v $ Var x 0)
-  App m n                           -> f 1 (\v -> App (App v (rec m)) (rec n))
-  Lam x m                           -> f 2 (\v -> App v <<< Lam x $ rec m)
+          | otherwise               -> f "a" 2 (\v -> App v $ shift 3 0 t)
+  App m n -> f "b" 1 (\v -> App (App v (shift 3 0 $ rec m)) (shift 3 0 $ rec n))
+  Lam x m -> f "c" 0 (\v -> App v <<< Lam x <<< shift 3 1 $ rec m)
   where
   rec = quote env
-  abc = ["a", "b", "c"]
-  f n g = Lam "a" (Lam "b" (Lam "c" (g <<< (flip Var 0) $ fromMaybe "a" (abc!!n))))
+  f s i g = Lam "a" (Lam "b" (Lam "c" (g $ Var s i)))
 
 -- De Bruijn Index
 type DebruijnIndex = Map String Int
