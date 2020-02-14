@@ -10,6 +10,7 @@ You can edit this file as you like.
     , "ordered-collections"
     , "parsing"
     , "psci-support"
+    , "run"
     , "test-unit"
     ]
 , packages = ./packages.dhall
