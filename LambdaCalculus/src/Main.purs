@@ -4,70 +4,82 @@ import Prelude
 import Data.Either (Either(..))
 import Data.Map as M
 import Effect (Effect)
-import Effect.Console (log, logShow)
-import LambdaCalculus (Env, LambdaLine(..), Term, line, norm)
+import Effect.Aff (launchAff_)
+import Effect.Console (log)
+import LambdaCalculus (Env, LambdaLine(..), line, norm)
 import Node.ReadLine as RL
-import Run (FProxy, Run, SProxy(..))
+import Node.ReadLine.Aff as RLAff
+import Run (AFF, EFFECT, FProxy, Run, SProxy(..), interpret, liftEffect, on, runBaseAff', send)
 import Run as Run
-import Run.Except (EXCEPT, throw)
-import Run.State (STATE, get, modify)
-import Run.Writer (WRITER, tell)
+import Run.Reader (READER, ask, runReader)
+import Run.State (STATE, get, modify, runState)
 import Text.Parsing.Parser (runParser)
-
-repl :: RL.Interface -> Env -> RL.LineHandler Unit
-repl console env s = do
-  case runParser s line of
-    Left err -> do
-      log $ "parse error: " <> show err
-      prompt console $ repl console env
-    Right Blank -> do
-      prompt console $ repl console env
-    Right (Run t) -> do
-      logShow $ norm env t
-      prompt console $ repl console env
-    Right (Let v t) -> do
-      prompt console <<< repl console $ M.insert v t env
-
-prompt :: RL.Interface -> RL.LineHandler Unit -> Effect Unit
-prompt console handler = do
-  RL.prompt console
-  RL.setLineHandler console handler
 
 main :: Effect Unit
 main = do
-  console <- RL.createConsoleInterface RL.noCompletion
-  RL.setPrompt "λ> " 3 console
-  prompt console $ repl console M.empty
+  interface <- RL.createConsoleInterface RL.noCompletion
+  RL.setPrompt "λ> " 3 interface
+  repl
+    # runReplInReadline
+    # runReader interface
+    # runState M.empty
+    # runBaseAff'
+    # launchAff_
 
 ---
 
-data LambdaREPLF a
-  = ParseLine String a
+data ReplF a
+  = ReplInput (String -> a)
+  | ReplOutput String a
 
-derive instance functorLambdaREPLF :: Functor LambdaREPLF
+derive instance functorReplF :: Functor ReplF
 
-type LAMBDAREPL = FProxy LambdaREPLF
+type REPL = FProxy ReplF
 
-_lambdarepl = SProxy :: SProxy "lambdarepl"
+_repl = SProxy :: SProxy "repl"
 
-parseLine :: forall r. String -> Run (lambdarepl :: LAMBDAREPL | r) Unit
-parseLine s = Run.lift _lambdarepl $ ParseLine s unit
+replInput :: forall r. Run (repl :: REPL | r) String
+replInput = Run.lift _repl $ ReplInput identity
+
+replOutput :: forall r. String -> Run(repl :: REPL | r) Unit
+replOutput s = Run.lift _repl $ ReplOutput s unit
+
+readlineRepl :: forall r. ReplF ~> Run (aff :: AFF, effect :: EFFECT, reader :: READER RL.Interface | r)
+readlineRepl = case _ of
+  ReplInput go -> do
+    interface <- ask
+    s <- RLAff.prompt interface
+    pure $ go s
+  ReplOutput s go -> do
+    liftEffect $ log s
+    pure go
+
+runReplInReadline
+  :: forall r
+   . Run (aff :: AFF, effect :: EFFECT, reader :: READER RL.Interface, repl :: REPL | r)
+  ~> Run (aff :: AFF, effect :: EFFECT, reader :: READER RL.Interface | r)
+runReplInReadline = interpret (on _repl readlineRepl send)
+
+---
 
 type ReplEffects r =
-  ( lambdarepl :: LAMBDAREPL
+  ( aff :: AFF
+  , effect :: EFFECT
+  , reader :: READER RL.Interface
   , state :: STATE Env
-  , writer :: WRITER Term
-  , except :: EXCEPT String | r
+  , repl :: REPL | r
   )
 
-_repl :: forall r. String -> Run (ReplEffects r) Unit
-_repl s = do
+repl :: forall r. Run (ReplEffects r) Unit
+repl = do
+  s <- replInput
   case runParser s line of
     Left err ->
-      throw $ "parse error: " <> show err
+      replOutput $ "parse error: " <> show err
     Right Blank -> pure unit
     Right (Run t) -> do
       env <- get
-      tell $ norm env t
+      replOutput <<< show $ norm env t
     Right (Let v t) ->
       modify $ M.insert v t
+  repl
