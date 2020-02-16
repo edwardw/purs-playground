@@ -1,14 +1,19 @@
 module Test.Main where
 
 import Prelude
+import Data.Array (snoc)
 import Data.Either (Either(..))
-import Data.Foldable (foldr)
-import Data.Tuple (Tuple(..))
+import Data.List (List)
+import Data.List as L
+import Data.Tuple (snd)
 import Data.Map as M
-import Data.Traversable (sequence)
-import Data.Unfoldable (replicate)
 import Effect (Effect)
 import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, term)
+import Main (program)
+import Run (extract)
+import Run.Console as RunConsole
+import Run.Node.ReadLine as RunRL
+import Run.State (runState)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -90,23 +95,20 @@ main = runTest do
                                                    (Var "z" 0))
                                               (Var "s" 1)))))))
         (norm M.empty <$> runParser "(λm. λn. λs. λz. m s (n z s))(λs. λz. s z)" term)
+  suite "lambda calculus repl" do
     test "2^3" do
       -- 2 = \f x -> f (f x)
       -- 3 = \f x -> f (f (f x))
       -- exp = \m n -> n m
       -- exp 2 3  -- Compute 2^3.
-      let two = runParser "λf x -> f (f x)" term
-      let thr = runParser "λf x -> f (f (f x))" term
-      let exp = runParser "λm n -> n m" term
-      let env = sequence $ M.fromFoldable [ Tuple "2" two
-                                          , Tuple "3" thr
-                                          , Tuple "exp" exp
-                                          ]
-      let apps = replicate 8 (App (Var "x" 1)) :: Array (Term -> Term)
-      let res  = foldr identity (Var "x" 0) apps
-      Assert.equal
-        (Right (Lam "x" (Lam "x" res)))
-        (norm <$> env <*> runParser "exp 2 3" term)
+      let inputs = [ "2 = λf x -> f (f x)"
+                   , "3 = λf x -> f (f (f x))"
+                   , "exp = λm n -> n m"
+                   , "exp 2 3"
+                   ]
+      let res = runProgram inputs
+      let expected = L.singleton "λx.λx.x@1(x@1(x@1(x@1(x@1(x@1(x@1(x@1 x)))))))"
+      Assert.equal expected res
     test "factorial" do
       -- true = \x y -> x
       -- false = \x y -> y
@@ -119,65 +121,51 @@ main = runTest do
       -- Y = \f -> (\x -> x x)(\x -> f(x x))
       -- fact = Y(\f n -> (is0 n) 1 (mul n (f (pred n))))
       -- fact (succ (succ (succ 1)))  -- Compute 4!
-      let t    = runParser "λx y -> x" term
-      let f    = runParser "λx y -> y" term
-      let zero = runParser "λf x -> x" term
-      let one  = runParser "λf x -> f x" term
-      let succ = runParser "λn f x -> f(n f x)" term
-      let pred = runParser "λn f x -> n(λg h -> h (g f)) (λu -> x) (λu ->u)" term
-      let mul  = runParser "λm n f -> m(n f)" term
-      let is0  = runParser "λn -> n (λx -> false) true" term
-      let _Y   = runParser "λf -> (λx -> x x)(λx -> f(x x))" term
-      let fact = runParser "Y(λf n -> (is0 n) 1 (mul n (f (pred n))))" term
-      let env  = sequence $ M.fromFoldable [ Tuple "true" t
-                                           , Tuple "false" f
-                                           , Tuple "0" zero
-                                           , Tuple "1" one
-                                           , Tuple "succ" succ
-                                           , Tuple "pred" pred
-                                           , Tuple "mul" mul
-                                           , Tuple "is0" is0
-                                           , Tuple "Y" _Y
-                                           , Tuple "fact" fact
-                                           ]
-      let apps = replicate 24 (App (Var "f" 1)) :: Array (Term -> Term)
-      let res  = foldr identity (Var "x" 0) apps
-      Assert.equal
-        (Right (Lam "f" (Lam "x" res)))
-        (norm <$> env <*> runParser "fact (succ (succ (succ 1)))" term)
+      let inputs = [ "true = λx y -> x"
+                   , "false = λx y -> y"
+                   , "0 = λf x -> x"
+                   , "1 = λf x -> f x"
+                   , "succ = λn f x -> f(n f x)"
+                   , "pred = λn f x -> n(λg h -> h (g f)) (λu -> x) (λu -> u)"
+                   , "mul = λm n f -> m(n f)"
+                   , "is0 = λn -> n (λx -> false) true"
+                   , "Y = λf -> (λx -> x x)(λx -> f(x x))"
+                   , "fact = Y(λf n -> (is0 n) 1 (mul n (f (pred n))))"
+                   , "fact (succ (succ (succ 1)))  -- Compute 4!"
+                   ]
+      let res = runProgram inputs
+      let expected = L.singleton "λf.λx.f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1 x)))))))))))))))))))))))"
+      Assert.equal expected res
     test "quote" do
-      let var = runParser "λm.λa b c.a m" term
-      let app = runParser "λm n.λa b c.b m n" term
-      let lam = runParser "λf.λa b c.c f" term
-      let env = sequence $ M.fromFoldable [ Tuple "Var" var
-                                          , Tuple "App" app
-                                          , Tuple "Lam" lam
-                                          ]
-      let expected = norm <$> env <*> runParser "App (Lam (λy.Var y)) (Var x)" term
-      let quoted = norm <$> env <*> runParser "quote ((λy.y) x)" term
-      Assert.equal expected quoted
+      let inputs = [ "Var = λm.λa b c.a m"
+                   , "App = λm n.λa b c.b m n"
+                   , "Lam = λf.λa b c.c f"
+                   , "quote ((λy.y) x)"
+                   ]
+      let res = runProgram inputs
+      let expected = L.singleton "λa.λb.λc.b@1(λa.λb.λc.c(λy.λa.λb.λc.a@2 y@3))(λa.λb.λc.a@2 x@6)"
+      Assert.equal expected res
     test "quoted self-interpreter and self-reducer" do
-      let _Y   = runParser "λf.(λx.f(x x))(λx.f(x x))" term
-      let _E   = runParser "Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))" term
-      let _P   = runParser "Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))" term
-      let _RR  = runParser "Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))" term
-      let _R   = runParser "λm.RR m (λa b.b)" term
-      let one  = runParser "λf x.f x" term
-      let succ = runParser "λn f x.f(n f x)" term
-      let env = sequence $ M.fromFoldable [ Tuple "Y" _Y
-                                          , Tuple "E" _E
-                                          , Tuple "P" _P
-                                          , Tuple "RR" _RR
-                                          , Tuple "R" _R
-                                          , Tuple "1" one
-                                          , Tuple "succ" succ
-                                          ]
-      let res1 = foldr identity (Var "v" 0) $
-                 (replicate 4 (App (Var "v" 1)) :: Array (Term -> Term))
-      let res2 = runParser "λa b c.c(λw a b c.c(λw1 a b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.b(λa b c.a w)(λa b c.a w1))))))" term
-      Assert.equal
-        (Right (Lam "v" (Lam "v" res1)))
-        (norm <$> env <*> runParser "E (quote (succ (succ (succ 1))))" term)
-      Assert.equal
-        res2
-        (norm <$> env <*> runParser "R (quote (succ (succ (succ 1))))" term)
+      let inputs = [ "Y = λf.(λx.f(x x))(λx.f(x x))"
+                   , "E = Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))"
+                   , "P = Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))"
+                   , "RR = Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))"
+                   , "R = λm.RR m (λa b.b)"
+                   , "1 = λf x.f x"
+                   , "succ = λn f x.f(n f x)"
+                   ]
+      let resE = runProgram $ snoc inputs "E (quote (succ (succ (succ 1))))"
+      let expectedE = L.singleton "λv.λv.v@1(v@1(v@1(v@1 v)))"
+      Assert.equal resE expectedE
+      let resR = runProgram $ snoc inputs "R (quote (succ (succ (succ 1))))"
+      let expectedR = L.singleton "λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"
+      Assert.equal resR expectedR
+
+runProgram :: Array String -> List String
+runProgram inputs =
+  program
+    # RunRL.runAccum inputs
+    # RunConsole.runAccum
+    # runState M.empty
+    # extract
+    # snd

@@ -59,13 +59,7 @@ data Term
   | App Term Term
   | Lam String Term
 
--- Under De Bruijn Index, when it comes to equality, variable names don't matter,
--- only their indices do.
-instance eqTerm :: Eq Term where
-  eq (Var _ i1) (Var _ i2)   = i1 == i2
-  eq (App a1 a2) (App b1 b2) = a1 == b1 && a2 == b2
-  eq (Lam _ t1) (Lam _ t2)   = t1 == t2
-  eq _ _                     = false
+derive instance eqTerm :: Eq Term
 
 instance showTerm :: Show Term where
   show (Lam s t) = "λ" <> s <> "." <> showB t
