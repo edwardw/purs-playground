@@ -6,7 +6,7 @@ module ReadLine
   , prompt
   , close
   , run
-  , runPure
+  , runAccum
   , module RLExports
   ) where
 
@@ -21,7 +21,7 @@ import Effect.Aff.Class (liftAff)
 import Node.ReadLine (Interface)
 import Node.ReadLine (Interface, noCompletion, createConsoleInterface) as RLExports
 import Node.ReadLine as RL
-import Run (AFF, EFFECT, FProxy, Run, SProxy(..), Step(..), interpret, liftEffect, on, runAccumPure, send)
+import Run (AFF, EFFECT, FProxy, Run, SProxy(..), Step(..), interpretRec, liftEffect, on, runAccumPure, send)
 import Run as Run
 import Run.Reader (READER, ask)
 
@@ -32,7 +32,7 @@ data ReadLineF a
   | Close a
 
 -- Much boiler plate
-derive instance functorReadLine :: Functor ReadLineF
+derive instance functorReadLineF :: Functor ReadLineF
 
 type READLINE = FProxy ReadLineF
 
@@ -53,7 +53,7 @@ run
   :: forall r
    . Run (aff :: AFF, effect :: EFFECT, reader :: READER Interface, readline :: READLINE | r)
   ~> Run (aff :: AFF, effect :: EFFECT, reader :: READER Interface | r)
-run = interpret (on _readline handleReadLine send)
+run = interpretRec (on _readline handleReadLine send)
 
 handleReadLine
   :: forall r
@@ -81,17 +81,17 @@ handleReadLine = case _ of
 
 -- | Run pure "command line", providing the given inputs. It expects the
 -- | interpreter to stop when the input is `ctrl-d`.
-runPure
+runAccum
   :: forall r a
    . Array String
   -> Run (readline :: READLINE | r) a
   -> Run r (Tuple (Array String) a)
-runPure = runAccumPure
-  (\inputs -> on _readline (Loop <<< handlePure inputs) Done)
+runAccum = runAccumPure
+  (\inputs -> on _readline (Loop <<< handleAccum inputs) Done)
   Tuple
 
-handlePure :: forall a. Array String -> ReadLineF a -> Tuple (Array String) a
-handlePure inputs = case _ of
+handleAccum :: forall a. Array String -> ReadLineF a -> Tuple (Array String) a
+handleAccum inputs = case _ of
   SetPrompt _ cb -> Tuple inputs cb
   Prompt cb -> case uncons inputs of
     Just { head, tail } -> Tuple tail (cb head)
