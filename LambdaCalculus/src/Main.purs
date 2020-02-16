@@ -7,17 +7,16 @@ import Effect (Effect)
 import Effect.Aff (launchAff_)
 import LambdaCalculus (Env, LambdaLine(..), line, norm)
 import Run (AFF, EFFECT, Run, runBaseAff')
-import Run.Console (CONSOLE, error, logShow)
-import Run.Console as RunConsole
-import Run.Node.ReadLine (Interface, READLINE, prompt, setPrompt)
-import Run.Node.ReadLine as RunRL
+import Run.Console (CONSOLE, error, logShow, runConsole)
+import Run.Node.ReadLine (Interface, READLINE, prompt, runReadLine, setPrompt)
+import Run.Node.ReadLine as RL
 import Run.Reader (READER, runReader)
 import Run.State (STATE, get, modify, runState)
 import Text.Parsing.Parser (runParser)
 
 main :: Effect Unit
 main = do
-  iface <- RunRL.createConsoleInterface RunRL.noCompletion
+  iface <- RL.createConsoleInterface RL.noCompletion
   repl
     # runReader iface
     # runState M.empty
@@ -29,7 +28,7 @@ repl :: forall r. Run ( aff :: AFF
                       , reader :: READER Interface
                       , state :: STATE Env
                       | r) Unit
-repl = program # RunRL.run # RunConsole.run
+repl = program # runReadLine # runConsole
 
 program :: forall r. Run ( state :: STATE Env
                          , readline :: READLINE

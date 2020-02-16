@@ -3,16 +3,14 @@ module Test.Main where
 import Prelude
 import Data.Array (snoc)
 import Data.Either (Either(..))
-import Data.List (List)
-import Data.List as L
 import Data.Tuple (snd)
 import Data.Map as M
 import Effect (Effect)
 import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, term)
 import Main (program)
 import Run (extract)
-import Run.Console as RunConsole
-import Run.Node.ReadLine as RunRL
+import Run.Console (runConsoleAccum)
+import Run.Node.ReadLine (runReadLineAccum)
 import Run.State (runState)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
@@ -107,7 +105,7 @@ main = runTest do
                    , "exp 2 3"
                    ]
       let res = runProgram inputs
-      let expected = L.singleton "λx.λx.x@1(x@1(x@1(x@1(x@1(x@1(x@1(x@1 x)))))))"
+      let expected = ["λx.λx.x@1(x@1(x@1(x@1(x@1(x@1(x@1(x@1 x)))))))"]
       Assert.equal expected res
     test "factorial" do
       -- true = \x y -> x
@@ -134,7 +132,7 @@ main = runTest do
                    , "fact (succ (succ (succ 1)))  -- Compute 4!"
                    ]
       let res = runProgram inputs
-      let expected = L.singleton "λf.λx.f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1 x)))))))))))))))))))))))"
+      let expected = ["λf.λx.f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1 x)))))))))))))))))))))))"]
       Assert.equal expected res
     test "quote" do
       let inputs = [ "Var = λm.λa b c.a m"
@@ -143,7 +141,7 @@ main = runTest do
                    , "quote ((λy.y) x)"
                    ]
       let res = runProgram inputs
-      let expected = L.singleton "λa.λb.λc.b@1(λa.λb.λc.c(λy.λa.λb.λc.a@2 y@3))(λa.λb.λc.a@2 x@6)"
+      let expected = ["λa.λb.λc.b@1(λa.λb.λc.c(λy.λa.λb.λc.a@2 y@3))(λa.λb.λc.a@2 x@6)"]
       Assert.equal expected res
     test "quoted self-interpreter and self-reducer" do
       let inputs = [ "Y = λf.(λx.f(x x))(λx.f(x x))"
@@ -155,17 +153,17 @@ main = runTest do
                    , "succ = λn f x.f(n f x)"
                    ]
       let resE = runProgram $ snoc inputs "E (quote (succ (succ (succ 1))))"
-      let expectedE = L.singleton "λv.λv.v@1(v@1(v@1(v@1 v)))"
+      let expectedE = ["λv.λv.v@1(v@1(v@1(v@1 v)))"]
       Assert.equal resE expectedE
       let resR = runProgram $ snoc inputs "R (quote (succ (succ (succ 1))))"
-      let expectedR = L.singleton "λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"
+      let expectedR = ["λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"]
       Assert.equal resR expectedR
 
-runProgram :: Array String -> List String
+runProgram :: Array String -> Array String
 runProgram inputs =
   program
-    # RunRL.runAccum inputs
-    # RunConsole.runAccum
+    # runReadLineAccum inputs
+    # runConsoleAccum
     # runState M.empty
     # extract
     # snd

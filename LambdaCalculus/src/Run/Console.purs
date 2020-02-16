@@ -7,9 +7,9 @@ module Run.Console
   , logShow
   , warn
   , warnShow
-  , run
+  , runConsole
   , runNoConsole
-  , runAccum
+  , runConsoleAccum
   , ConsoleF(..)
   , CONSOLE
   , _console
@@ -18,8 +18,7 @@ module Run.Console
 
 import Prelude
 import Effect.Console as EC
-import Data.List (reverse)
-import Data.List.Types (List(..))
+import Data.Array (cons, reverse)
 import Run (EFFECT, FProxy, Run, SProxy(..), Step(..), interpretRec, liftEffect, on, onMatch, send)
 import Run as Run
 
@@ -67,27 +66,27 @@ warnShow x = Run.lift _console $ Warn (show x) unit
 -- | but does not print any to the console.
 -- |
 -- | Useful when you want to see what would be printed to the console.
-runAccum
+runConsoleAccum
   :: forall a r
    . Run (console :: CONSOLE | r) a
-  -> Run r (List String)
-runAccum x = reverse <$> runPure cons (Nil <$ x)
+  -> Run r (Array String)
+runConsoleAccum x = reverse <$> runPure k ([] <$ x)
   where
-  cons = case _ of
-    Error str w -> Cons str <$> w
-    Info str w -> Cons str <$> w
-    Log str w -> Cons str <$> w
-    Warn str w -> Cons str <$> w
+  k = case _ of
+    Error str w -> cons str <$> w
+    Info str w -> cons str <$> w
+    Log str w -> cons str <$> w
+    Warn str w -> cons str <$> w
 
 
 -- | Prints all messages to the console.
 -- |
 -- | Normally this is what you'll use to print to the console.
-run
+runConsole
   :: forall r
    . Run (effect :: EFFECT, console :: CONSOLE | r)
   ~> Run (effect :: EFFECT | r)
-run = interpretRec (on _console handleConsole send)
+runConsole = interpretRec (on _console handleConsole send)
 
 handleConsole
   :: forall r

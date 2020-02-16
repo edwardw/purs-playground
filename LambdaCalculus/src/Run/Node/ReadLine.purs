@@ -5,8 +5,8 @@ module Run.Node.ReadLine
   , setPrompt
   , prompt
   , close
-  , run
-  , runAccum
+  , runReadLine
+  , runReadLineAccum
   , module RLExports
   ) where
 
@@ -49,11 +49,11 @@ close = Run.lift _readline $ Close unit
 
 
 -- | Run effectful command line
-run
+runReadLine
   :: forall r
    . Run (aff :: AFF, effect :: EFFECT, reader :: READER Interface, readline :: READLINE | r)
   ~> Run (aff :: AFF, effect :: EFFECT, reader :: READER Interface | r)
-run = interpretRec (on _readline handleReadLine send)
+runReadLine = interpretRec (on _readline handleReadLine send)
 
 handleReadLine
   :: forall r
@@ -81,12 +81,12 @@ handleReadLine = case _ of
 
 -- | Run pure "command line", providing the given inputs. It expects the
 -- | interpreter to stop when the input is `ctrl-d`.
-runAccum
+runReadLineAccum
   :: forall r a
    . Array String
   -> Run (readline :: READLINE | r) a
   -> Run r (Tuple (Array String) a)
-runAccum = runAccumPure
+runReadLineAccum = runAccumPure
   (\inputs -> on _readline (Loop <<< handleAccum inputs) Done)
   Tuple
 
