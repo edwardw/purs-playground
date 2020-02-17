@@ -4,7 +4,8 @@ import Prelude
 import Data.Either (Either(..))
 import Data.Map as M
 import Effect (Effect)
-import Effect.Aff (launchAff_)
+import Effect.Class (liftEffect)
+import Effect.Aff (bracket, launchAff_)
 import LambdaCalculus (Env, LambdaLine(..), line, norm)
 import Run (Run, runBaseAff')
 import Run.Console (CONSOLE, error, logShow, runConsole)
@@ -15,15 +16,17 @@ import Run.State (STATE, get, modify, runState)
 import Text.Parsing.Parser (runParser)
 
 main :: Effect Unit
-main = do
-  iface <- RL.createConsoleInterface RL.noCompletion
-  program
-    # runReadLine
-    # runConsole
-    # runReader iface
-    # runState M.empty
-    # runBaseAff'
-    # launchAff_
+main = launchAff_ $ bracket
+  (liftEffect $ RL.createConsoleInterface RL.noCompletion)
+  (\iface -> liftEffect $ RL.close iface)
+  (\iface ->
+    program
+      # runReadLine
+      # runConsole
+      # runReader iface
+      # runState M.empty
+      # runBaseAff'
+  )
 
 program :: forall r. Run ( state :: STATE Env
                          , readline :: READLINE

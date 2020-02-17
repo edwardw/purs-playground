@@ -4,7 +4,6 @@ module Run.Node.ReadLine
   , _readline
   , setPrompt
   , prompt
-  , close
   , runReadLine
   , runReadLineAccum
   , module RLExports
@@ -19,7 +18,7 @@ import Data.Tuple (Tuple(..))
 import Effect.Aff (makeAff, nonCanceler)
 import Effect.Aff.Class (liftAff)
 import Node.ReadLine (Interface)
-import Node.ReadLine (Interface, noCompletion, createConsoleInterface) as RLExports
+import Node.ReadLine (Interface, close, createConsoleInterface, noCompletion) as RLExports
 import Node.ReadLine as RL
 import Run (AFF, EFFECT, FProxy, Run, SProxy(..), Step(..), interpretRec, liftEffect, on, runAccumPure, send)
 import Run as Run
@@ -29,7 +28,6 @@ import Run.Reader (READER, ask)
 data ReadLineF a
   = SetPrompt String a
   | Prompt (String -> a)
-  | Close a
 
 -- Much boiler plate
 derive instance functorReadLineF :: Functor ReadLineF
@@ -43,9 +41,6 @@ setPrompt str = Run.lift _readline $ SetPrompt str unit
 
 prompt :: forall r. Run (readline :: READLINE | r) String
 prompt = Run.lift _readline $ Prompt identity
-
-close :: forall r. Run (readline :: READLINE | r) Unit
-close = Run.lift _readline $ Close unit
 
 
 -- | Run effectful command line
@@ -74,10 +69,6 @@ handleReadLine = case _ of
           RL.prompt iface
           RL.setLineHandler iface (handler <<< Right)
           pure nonCanceler
-  Close cb -> do
-    iface <- ask
-    liftEffect $ RL.close iface
-    pure cb
 
 -- | Run pure "command line", providing the given inputs. It expects the
 -- | interpreter to stop when the input is `ctrl-d`.
@@ -96,4 +87,3 @@ handleAccum inputs = case _ of
   Prompt cb -> case uncons inputs of
     Just { head, tail } -> Tuple tail (cb head)
     Nothing -> Tuple mempty (cb "\\d")
-  Close cb -> Tuple inputs cb
