@@ -11,6 +11,7 @@ You can edit this file as you like.
     , "parsing"
     , "psci-support"
     , "run"
+    , "stringutils"
     , "test-unit"
     ]
 , packages = ./packages.dhall

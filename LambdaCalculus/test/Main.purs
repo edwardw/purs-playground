@@ -1,8 +1,8 @@
 module Test.Main where
 
 import Prelude
-import Data.Array (snoc)
 import Data.Either (Either(..))
+import Data.String.Utils (lines)
 import Data.Tuple (snd)
 import Data.Map as M
 import Effect (Effect)
@@ -95,74 +95,61 @@ main = runTest do
         (norm M.empty <$> runParser "(λm. λn. λs. λz. m s (n z s))(λs. λz. s z)" term)
   suite "lambda calculus repl" do
     test "2^3" do
-      -- 2 = \f x -> f (f x)
-      -- 3 = \f x -> f (f (f x))
-      -- exp = \m n -> n m
-      -- exp 2 3  -- Compute 2^3.
-      let inputs = [ "2 = λf x -> f (f x)"
-                   , "3 = λf x -> f (f (f x))"
-                   , "exp = λm n -> n m"
-                   , "exp 2 3"
-                   ]
-      let res = runProgram inputs
+      let program' = """
+        2 = λf x -> f (f x)
+        3 = λf x -> f (f (f x))
+        exp = λm n -> n m
+        exp 2 3"""
+
+      let res = runProgram program'
       let expected = ["λx.λx.x@1(x@1(x@1(x@1(x@1(x@1(x@1(x@1 x)))))))"]
       Assert.equal expected res
     test "factorial" do
-      -- true = \x y -> x
-      -- false = \x y -> y
-      -- 0 = \f x -> x
-      -- 1 = \f x -> f x
-      -- succ = \n f x -> f(n f x)
-      -- pred = \n f x -> n(\g h -> h (g f)) (\u -> x) (\u ->u)
-      -- mul = \m n f -> m(n f)
-      -- is0 = \n -> n (\x -> false) true
-      -- Y = \f -> (\x -> x x)(\x -> f(x x))
-      -- fact = Y(\f n -> (is0 n) 1 (mul n (f (pred n))))
-      -- fact (succ (succ (succ 1)))  -- Compute 4!
-      let inputs = [ "true = λx y -> x"
-                   , "false = λx y -> y"
-                   , "0 = λf x -> x"
-                   , "1 = λf x -> f x"
-                   , "succ = λn f x -> f(n f x)"
-                   , "pred = λn f x -> n(λg h -> h (g f)) (λu -> x) (λu -> u)"
-                   , "mul = λm n f -> m(n f)"
-                   , "is0 = λn -> n (λx -> false) true"
-                   , "Y = λf -> (λx -> x x)(λx -> f(x x))"
-                   , "fact = Y(λf n -> (is0 n) 1 (mul n (f (pred n))))"
-                   , "fact (succ (succ (succ 1)))  -- Compute 4!"
-                   ]
-      let res = runProgram inputs
+      let program' = """
+        true = λx y -> x
+        false = λx y -> y
+        0 = λf x -> x
+        1 = λf x -> f x
+        succ = λn f x -> f(n f x)
+        pred = λn f x -> n(λg h -> h (g f)) (λu -> x) (λu -> u)
+        mul = λm n f -> m(n f)
+        is0 = λn -> n (λx -> false) true
+        Y = λf -> (λx -> x x)(λx -> f(x x))
+        fact = Y(λf n -> (is0 n) 1 (mul n (f (pred n))))
+        fact (succ (succ (succ 1)))  -- Compute 4!"""
+      let res = runProgram program'
       let expected = ["λf.λx.f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1 x)))))))))))))))))))))))"]
       Assert.equal expected res
     test "quote" do
-      let inputs = [ "Var = λm.λa b c.a m"
-                   , "App = λm n.λa b c.b m n"
-                   , "Lam = λf.λa b c.c f"
-                   , "quote ((λy.y) x)"
-                   ]
-      let res = runProgram inputs
+      let program' = """
+        Var = λm.λa b c.a m
+        App = λm n.λa b c.b m n
+        Lam = λf.λa b c.c f
+        quote ((λy.y) x)"""
+      let res = runProgram program'
       let expected = ["λa.λb.λc.b@1(λa.λb.λc.c(λy.λa.λb.λc.a@2 y@3))(λa.λb.λc.a@2 x@6)"]
       Assert.equal expected res
     test "quoted self-interpreter and self-reducer" do
-      let inputs = [ "Y = λf.(λx.f(x x))(λx.f(x x))"
-                   , "E = Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))"
-                   , "P = Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))"
-                   , "RR = Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))"
-                   , "R = λm.RR m (λa b.b)"
-                   , "1 = λf x.f x"
-                   , "succ = λn f x.f(n f x)"
-                   ]
-      let resE = runProgram $ snoc inputs "E (quote (succ (succ (succ 1))))"
-      let expectedE = ["λv.λv.v@1(v@1(v@1(v@1 v)))"]
-      Assert.equal resE expectedE
-      let resR = runProgram $ snoc inputs "R (quote (succ (succ (succ 1))))"
-      let expectedR = ["λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"]
-      Assert.equal resR expectedR
+      let program' = """
+        Y = λf.(λx.f(x x))(λx.f(x x))
+        E = Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))
+        P = Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))
+        RR = Y(λr m.m (λx.x) (λm n.(r m) (λa b.a) (r n)) (λm.(λg x.x g(λa b c.c(λw.g(P (λa b c.a w))(λa b.b)))) (λv.r(m v))))
+        R = λm.RR m (λa b.b)
+        1 = λf x.f x
+        succ = λn f x.f(n f x)
+        E (quote (succ (succ (succ 1))))
+        R (quote (succ (succ (succ 1))))"""
+      let res = runProgram program'
+      let expected = [ "λv.λv.v@1(v@1(v@1(v@1 v)))"
+                     , "λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"
+                     ]
+      Assert.equal expected res
 
-runProgram :: Array String -> Array String
-runProgram inputs =
+runProgram :: String -> Array String
+runProgram p =
   program
-    # runReadLineAccum inputs
+    # runReadLineAccum (lines p)
     # runConsoleAccum
     # runState M.empty
     # extract
