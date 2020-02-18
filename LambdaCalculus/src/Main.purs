@@ -18,7 +18,7 @@ import Text.Parsing.Parser (runParser)
 main :: Effect Unit
 main = launchAff_ $ bracket
   (liftEffect $ RL.createConsoleInterface RL.noCompletion)
-  (\iface -> liftEffect $ RL.close iface)
+  (liftEffect <<< RL.close)
   (\iface ->
     program
       # runReadLine

@@ -18,8 +18,9 @@ module Run.Console
 
 import Prelude
 import Effect.Console as EC
-import Data.Array (cons, reverse)
-import Run (EFFECT, FProxy, Run, SProxy(..), Step(..), interpretRec, liftEffect, on, onMatch, send)
+import Data.Array (snoc)
+import Data.Tuple (Tuple(..))
+import Run (EFFECT, FProxy, Run, SProxy(..), Step(..), interpretRec, liftEffect, on, runAccumPure, runPure, send)
 import Run as Run
 
 -- | The possible messages we can have on the console
@@ -62,22 +63,24 @@ warn str = Run.lift _console $ Warn str unit
 warnShow :: forall a r. Show a => a -> Run (console :: CONSOLE | r) Unit
 warnShow x = Run.lift _console $ Warn (show x) unit
 
--- | Accumulates all console messages into a list
+-- | Accumulates all console messages into a array
 -- | but does not print any to the console.
 -- |
 -- | Useful when you want to see what would be printed to the console.
 runConsoleAccum
-  :: forall a r
+  :: forall r a
    . Run (console :: CONSOLE | r) a
   -> Run r (Array String)
-runConsoleAccum x = reverse <$> runPure k ([] <$ x)
+runConsoleAccum = runAccumPure
+  (\acc -> on _console (Loop <<< handlePure acc) Done)
+  (\acc _ -> acc)
+  []
   where
-  k = case _ of
-    Error str w -> cons str <$> w
-    Info str w -> cons str <$> w
-    Log str w -> cons str <$> w
-    Warn str w -> cons str <$> w
-
+    handlePure acc = case _ of
+      Error str cb -> Tuple (snoc acc str) cb
+      Info str cb -> Tuple (snoc acc str) cb
+      Log str cb -> Tuple (snoc acc str) cb
+      Warn str cb -> Tuple (snoc acc str) cb
 
 -- | Prints all messages to the console.
 -- |
@@ -93,18 +96,14 @@ handleConsole
    . ConsoleF
   ~> Run (effect :: EFFECT | r)
 handleConsole = case _ of
-  Error str x -> do
-    liftEffect $ EC.error str
-    pure x
-  Info str x -> do
-    liftEffect $ EC.info str
-    pure x
-  Log str x -> do
-    liftEffect $ EC.log str
-    pure x
-  Warn str x -> do
-    liftEffect $ EC.warn str
-    pure x
+  Error str cb ->
+    liftEffect $ EC.error str $> cb
+  Info str cb ->
+    liftEffect $ EC.info str $> cb
+  Log str cb ->
+    liftEffect $ EC.log str $> cb
+  Warn str cb ->
+    liftEffect $ EC.warn str $> cb
 
 
 -- | Runs without printing any messages to the console.
@@ -112,18 +111,11 @@ handleConsole = case _ of
 -- | Useful when you want to eliminate the `CONSOLE` type
 -- | without printing anything to the console.
 runNoConsole :: forall r. Run (console :: CONSOLE | r) ~> Run r
-runNoConsole = runPure case _ of
-  Error _ w -> w
-  Info _ w -> w
-  Log _ w -> w
-  Warn _ w -> w
-
--- | Runs the given function in a pure context eliminating the `CONSOLE` type.
--- |
--- | Useful for building up new pure interpreters.
-runPure
-  :: forall a r
-  . (ConsoleF (Run (console :: CONSOLE | r) a) -> Run (console :: CONSOLE | r) a)
-  -> Run (console :: CONSOLE | r) a
-  -> Run r a
-runPure f = Run.runPure $ onMatch { console: Loop <<< f } Done
+runNoConsole = runPure
+  (on _console (Loop <<< handlePure) Done)
+  where
+    handlePure = case _ of
+      Error _ cb -> cb
+      Info _ cb -> cb
+      Log _ cb -> cb
+      Warn _ cb -> cb
