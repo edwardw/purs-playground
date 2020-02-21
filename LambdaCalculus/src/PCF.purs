@@ -35,14 +35,52 @@ import Text.Parsing.Parser.Combinators (between, chainr1, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
 import Text.Parsing.Parser.Token (alphaNum)
 
+-- | Suppose we allow local let expression:
+-- |
+-- |    let _ = _ in _
+-- |
+-- | anywhere we expect a term. Then it might be reasonable to permit the following:
+-- |
+-- |    one = let f = \x.x in f succ (f 0)
+-- |
+-- | Apparently two occurrences of `f` have different types. Allowing different uses
+-- | of a definition to have different types is called *let-polymorphism*.
+-- |
+-- | We demonstrate it with PCF (Programming Computable Functions), a simply typed
+-- | lambda calculus with the base type `Nat` with the constant 0 and extended with:
+-- |
+-- |    - `pred`, `succ: these functions have the type `Nat -> Nat`.
+-- |      Evaluating `pred 0` anywhere returns a `Err` which represent this exception.
+-- |
+-- |    - `ifz-then`else`: when given 0, evaluates to its `then` branch, otherwise
+-- |      evaluates to its `else` branch.
+-- |
+-- |    - `fix`: the fix point operator, allowing recursion (but breaking normalization).
+-- |
+-- | We also provide an `undefined` keyword that throws an error.
+-- |
+-- | We say that
+-- |
+-- |    id = \x.x
+-- |
+-- | has type:
+-- |
+-- |    ∀X.X -> X
+-- |
+-- | The symbol ∀ indicates a given type variable is generalized. Lambda calculus with
+-- | generalized type variables from let-polymorphism is known as the *Hindley-Milner*,
+-- | or HM for short. HM is strongly normalizing.
+-- |
+-- | We are surprisingly close to Haskell 98.
 data Type
   = Nat
+  -- Type variable
   | TV String
+  -- Generalized type variable
   | GV String
   | Fn Type Type
 
 derive instance eqType :: Eq Type
-derive instance ordType :: Ord Type
 
 instance showType :: Show Type where
   show Nat = "Nat"
@@ -133,12 +171,16 @@ line = between ws eof $ option Blank $
 
 --- Type Inference
 
+-- Types of variables
 type Gamma = Array (Tuple String Type)
 
-type Gathr = { ty :: Type, cs :: Array (Tuple Type Type), ix :: Int }
-type Insta = { ty :: Type, acc :: Gamma, ix :: Int }
+-- Type constraints
+type TyCs = { ty :: Type, cs :: Array (Tuple Type Type), ix :: Int }
 
-gather :: Gamma -> Int -> Term -> Gathr
+-- Type instantiations
+type TyIs = { ty :: Type, ins :: Gamma, ix :: Int }
+
+gather :: Gamma -> Int -> Term -> TyCs
 gather gamma i term = case term of
   Var "undefined" _ -> { ty: TV $ "_" <> show i, cs: [], ix: i + 1 }
   Var "fix" _ -> { ty: Fn (Fn a a) a, cs: [], ix: i + 1 }
@@ -148,7 +190,7 @@ gather gamma i term = case term of
   Var s _
     | Just _ <- fromString s -> { ty: Nat, cs: [], ix: i }
     | Just t <- lookup s gamma ->
-      let { ty: t', acc: _, ix: j } = instantiate t i in { ty: t', cs: [], ix: j }
+      let { ty: t', ins: _, ix: j } = instantiate t i in { ty: t', cs: [], ix: j }
     | otherwise -> { ty: TV "_", cs: [Tuple (GV $ "undefined: " <> s) (GV "?")], ix: i }
   Lam (Tuple s (TV "_")) u -> { ty: Fn x tu, cs: cs, ix: j }
     where
@@ -157,10 +199,10 @@ gather gamma i term = case term of
   Lam (Tuple s t) u -> { ty: Fn t tu, cs, ix: j }
     where
     { ty: tu, cs, ix: j } = gather (Tuple s t : gamma) i u
-  App t u -> { ty: x, cs: [Tuple tt (Fn uu x)] `union` cs1 `union` cs2, ix: k + 1 }
+  App t u -> { ty: x, cs: [Tuple tt (Fn tu x)] `union` cs1 `union` cs2, ix: k + 1 }
     where
     { ty: tt, cs: cs1, ix: j } = gather gamma i t
-    { ty: uu, cs: cs2, ix: k } = gather gamma j u
+    { ty: tu, cs: cs2, ix: k } = gather gamma j u
     x = TV $ "_" <> show k
   Ifz s t u -> { ty: tt
                , cs: foldl union [Tuple ts Nat, Tuple tt tu] [cs1, cs2, cs3]
@@ -175,20 +217,21 @@ gather gamma i term = case term of
     { ty: tt, cs: cs1, ix: j } = gather gamma i t
     gen = generalize (S.fromFoldable $ concatMap (freeTV <<< snd) gamma) tt
     { ty: tu, cs: cs2, ix: k } = gather (Tuple s gen : gamma) j u
-  Err -> { ty: GV "?", cs: [], ix: i }
+  Err -> { ty: TV "_", cs: [Tuple (GV "error") (GV "?")], ix: i }
 
-instantiate :: Type -> Int -> Insta
+-- | Generates fresh type variables for generalized type variables.
+instantiate :: Type -> Int -> TyIs
 instantiate = go []
   where
   go m ty i = case ty of
-    GV s | Just t <- lookup s m -> { ty: t, acc: m, ix: i }
-         | otherwise            -> { ty: x, acc: Tuple s x : m, ix: i + 1 }
+    GV s | Just t <- lookup s m -> { ty: t, ins: m, ix: i }
+         | otherwise            -> { ty: x, ins: Tuple s x : m, ix: i + 1 }
            where x = TV $ "_" <> show i
-    Fn t u -> { ty: Fn t' u', acc: m'', ix: i'' }
+    Fn t u -> { ty: Fn t' u', ins: m'', ix: i'' }
       where
-      { ty: t', acc: m', ix: i' } = go m t i
-      { ty: u', acc: m'', ix: i'' } = go m' u i'
-    _ -> { ty: ty, acc: m, ix: i }
+      { ty: t', ins: m', ix: i' } = go m t i
+      { ty: u', ins: m'', ix: i'' } = go m' u i'
+    _ -> { ty: ty, ins: m, ix: i }
 
 generalize :: Set String -> Type -> Type
 generalize fvs ty = case ty of
@@ -202,17 +245,22 @@ freeTV = case _ of
   TV tv  -> [tv]
   _      -> []
 
-unify :: Array (Tuple Type Type) -> Either String (Array (Tuple String Type))
+unify :: Array (Tuple Type Type) -> Either String Gamma
 unify tys = case uncons tys of
   Nothing -> Right []
   Just { head: Tuple (GV s) (GV "?"), tail: _ } -> Left s
   Just { head: Tuple s t, tail } | s == t       -> unify tail
   Just { head: Tuple (TV x) t, tail }
-    | x `elem` freeTV t -> Left $ "infinite: " <> x <> " = " <> show t
-    | otherwise         -> (Tuple x t : _) <$> unify (join (***) (substTy $ Tuple x t) <$> tail)
-  Just { head: Tuple s (TV y), tail }              -> unify $ Tuple (TV y) s : tail
-  Just { head: Tuple (Fn s1 s2) (Fn t1 t2), tail } -> unify $ Tuple s1 t1 : Tuple s2 t2 : tail
-  Just { head: Tuple s t, tail: _ }                -> Left $ "mismatch: " <> show s <> " /= " <> show t
+    | x `elem` freeTV t ->
+      Left $ "infinite: " <> x <> " = " <> show t
+    | otherwise ->
+      (Tuple x t : _) <$> unify (join (***) (substTy $ Tuple x t) <$> tail)
+  Just { head: Tuple s (TV y), tail } ->
+    unify $ Tuple (TV y) s : tail
+  Just { head: Tuple (Fn s1 s2) (Fn t1 t2), tail } ->
+    unify $ Tuple s1 t1 : Tuple s2 t2 : tail
+  Just { head: Tuple s t, tail: _ } ->
+    Left $ "mismatch: " <> show s <> " /= " <> show t
 
 substTy :: Tuple String Type -> Type -> Type
 substTy p@(Tuple x t) ty = case ty of
@@ -220,15 +268,21 @@ substTy p@(Tuple x t) ty = case ty of
   TV y | y == x -> t
   _             -> ty
 
+-- | Applies all the substitutions found during unify to the type expression
+-- | returned by gather to compute the principal type of a given closed term
+-- | in a given context.
 typeOf :: Gamma -> Term -> Either String Type
 typeOf gamma term = foldl (flip substTy) ty <$> unify cs
   where
   { ty, cs, ix: _ } = gather gamma 0 term
 
+
 --- Evaluation
 
 type Lets = Map String Term
 
+-- The interesting this is, once we are certain a closed term is well-types,
+-- we can ignore the types and evaluate as we would in untyped lambda calculus.
 eval :: Lets -> Term -> Term
 eval env term = case term of
   Var "undefined" _ -> Err
@@ -331,16 +385,18 @@ type DebruijnIndex = Map String Int
 
 -- Assign De Bruijn indices to `Var` terms, eliminating the need of renaming them.
 dbi :: DebruijnIndex -> Term -> Term
-dbi ix (Var s _)             = Var s <<< fromMaybe 0 $ M.lookup s ix
-dbi ix (Lam v@(Tuple s _) m) = Lam v (dbi ix' m)
+dbi ix term = case term of
+  Var s _             -> Var s <<< fromMaybe 0 $ M.lookup s ix
+  Lam v@(Tuple s _) m -> Lam v $ dbi (ix' s) m
+  App m n             -> App (dbi ix m) (dbi ix n)
+  Ifz m n o           -> Ifz (dbi ix m) (dbi ix n) (dbi ix o)
+  Let s m n           -> Let s (dbi ix m) $ dbi (ix' s) n
+  Err                 -> Err
   where
-  -- The `Lam` term is the binder, so increase every known `Var`s De Bruijn Index.
-  -- Also overwrite the `Var` with the same name as `s`; it starts fresh.
-  ix' = M.insert s 0 $ map (_ + 1) ix
-dbi ix (App m n)   = App (dbi ix m) (dbi ix n)
-dbi ix (Ifz m n o) = Ifz (dbi ix m) (dbi ix n) (dbi ix o)
-dbi ix (Let s m n) = Let s (dbi ix m) (dbi ix n)
-dbi _ (Err)        = Err
+  -- The `Lam` and `Let` terms are binders, so increase every known `Var`s
+  -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
+  -- it starts fresh.
+  ix' s = M.insert s 0 $ map (_ + 1) ix
 
 
 -- REPL
