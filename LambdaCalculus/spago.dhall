@@ -9,6 +9,7 @@ You can edit this file as you like.
     , "node-readline"
     , "ordered-collections"
     , "parsing"
+    , "profunctor"
     , "psci-support"
     , "run"
     , "stringutils"

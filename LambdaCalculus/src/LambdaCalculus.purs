@@ -3,23 +3,28 @@
 module LambdaCalculus
   ( Term(..)
   , LambdaLine(..)
-  , Env
-  , term
-  , line
   , eval
+  , line
   , norm
+  , term
+  , program
   ) where
 
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
 import Data.Array (many, some)
+import Data.Either (Either(..))
 import Data.Foldable (foldl, foldr)
 import Data.Map (Map, lookup)
 import Data.Map as M
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String.CodeUnits (fromCharArray)
-import Text.Parsing.Parser (Parser)
+import Run (Run)
+import Run.Console (CONSOLE, error, logShow)
+import Run.Node.ReadLine (READLINE, prompt, setPrompt)
+import Run.State (STATE, get, modify)
+import Text.Parsing.Parser (Parser, runParser)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
 import Text.Parsing.Parser.Token (alphaNum)
@@ -215,3 +220,24 @@ dbi ix (Lam s m) = Lam s (rec m)
 dbi ix (App m n) = App (rec m) (rec n)
   where
   rec = dbi ix
+
+
+-- REPL
+program :: forall r. Run ( state :: STATE Env
+                         , readline :: READLINE
+                         , console :: CONSOLE
+                         | r) Unit
+program = do
+  setPrompt "λ> "
+  s <- prompt
+  when (s /= "\\d") do
+    case runParser s line of
+      Left err ->
+        error $ "parse error: " <> show err
+      Right Blank -> pure unit
+      Right (Run t) -> do
+        env <- get
+        logShow $ norm env t
+      Right (Let v t) ->
+        modify $ M.insert v t
+    program
