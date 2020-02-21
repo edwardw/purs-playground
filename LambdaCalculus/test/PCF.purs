@@ -78,6 +78,22 @@ testPCF = runTest do
                      , "λc:_.λn:_.c@1 1(c@1 1(c@1 3(c@1 4(c@1 5 n))))"
                      ]
       Assert.equal expected res
+    test "list sum" do
+      let program' = """
+        add=fix (\f m n.ifz m then n else f (pred m) (succ n))
+        nil=\c n.n
+        cons=\h t c n.c h(t c n)
+        sum=\xs:(I->I->I)->I->I.xs(\h:I t:I.add h t)0
+        sum (cons 1 (cons 125 (cons 27 nil)))
+        """
+      let res = runProgram program'
+      let expected = [ "[add : Nat -> Nat -> Nat]"
+                     , "[nil : _0 -> _1 -> _1]"
+                     , "[cons : _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
+                     , "[sum : ((Nat -> Nat -> Nat) -> Nat -> Nat) -> Nat]"
+                     , "153"
+                     ]
+      Assert.equal expected res
 
 runProgram :: String -> Array String
 runProgram p =
