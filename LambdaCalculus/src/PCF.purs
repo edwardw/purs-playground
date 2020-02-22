@@ -13,9 +13,9 @@ module PCF
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
-import Data.Array (concatMap, many, some, uncons, union, (:))
+import Data.Array (many, some, uncons, union, (:))
 import Data.Either (Either(..))
-import Data.Foldable (elem, foldl, foldr)
+import Data.Foldable (elem, foldMap, foldl, foldr)
 import Data.Int (fromString)
 import Data.Map (Map)
 import Data.Map as M
@@ -215,7 +215,7 @@ gather gamma i term = case term of
   Let s t u -> { ty: tu, cs: cs1 `union` cs2, ix: k }
     where
     { ty: tt, cs: cs1, ix: j } = gather gamma i t
-    gen = generalize (S.fromFoldable $ concatMap (freeTV <<< snd) gamma) tt
+    gen = generalize (foldMap (freeTV <<< snd) gamma) tt
     { ty: tu, cs: cs2, ix: k } = gather (Tuple s gen : gamma) j u
   Err -> { ty: TV "_", cs: [Tuple (GV "error") (GV "?")], ix: i }
 
@@ -239,11 +239,11 @@ generalize fvs ty = case ty of
   Fn s t                    -> Fn (generalize fvs s) (generalize fvs t)
   _                         -> ty
 
-freeTV :: Type -> Array String
+freeTV :: Type -> Set String
 freeTV = case _ of
   Fn a b -> freeTV a <> freeTV b
-  TV tv  -> [tv]
-  _      -> []
+  TV tv  -> S.singleton tv
+  _      -> S.empty
 
 unify :: Array (Tuple Type Type) -> Either String Gamma
 unify tys = case uncons tys of
@@ -251,7 +251,7 @@ unify tys = case uncons tys of
   Just { head: Tuple (GV s) (GV "?"), tail: _ } -> Left s
   Just { head: Tuple s t, tail } | s == t       -> unify tail
   Just { head: Tuple (TV x) t, tail }
-    | x `elem` freeTV t ->
+    | x `member` freeTV t ->
       Left $ "infinite: " <> x <> " = " <> show t
     | otherwise ->
       (Tuple x t : _) <$> unify (join (***) (substTy $ Tuple x t) <$> tail)
