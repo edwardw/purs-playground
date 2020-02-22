@@ -7,7 +7,7 @@ module LambdaCalculus
   , line
   , norm
   , term
-  , program
+  , repl
   ) where
 
 import Prelude hiding (between)
@@ -20,10 +20,11 @@ import Data.Map (Map, lookup)
 import Data.Map as M
 import Data.Maybe (Maybe(..), fromMaybe)
 import Data.String.CodeUnits (fromCharArray)
+import Data.Tuple (Tuple)
 import Run (Run)
 import Run.Console (CONSOLE, error, logShow)
 import Run.Node.ReadLine (READLINE, prompt, setPrompt)
-import Run.State (STATE, get, modify)
+import Run.State (get, modify, runState)
 import Text.Parsing.Parser (Parser, runParser)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
@@ -223,21 +224,20 @@ dbi ix (App m n) = App (rec m) (rec n)
 
 
 -- REPL
-program :: forall r. Run ( state :: STATE Env
-                         , readline :: READLINE
-                         , console :: CONSOLE
-                         | r) Unit
-program = do
-  setPrompt "λ> "
-  s <- prompt
-  when (s /= "\\d") do
-    case runParser s line of
-      Left err ->
-        error $ "parse error: " <> show err
-      Right Blank -> pure unit
-      Right (Run t) -> do
-        env <- get
-        logShow $ norm env t
-      Right (Let v t) ->
-        modify $ M.insert v t
-    program
+repl :: forall r. Run (readline :: READLINE , console :: CONSOLE | r) (Tuple Env Unit)
+repl = runState M.empty repl'
+  where
+  repl' = do
+    setPrompt "λ> "
+    s <- prompt
+    when (s /= "\\d") do
+      case runParser s line of
+        Left err ->
+          error $ "parse error: " <> show err
+        Right Blank -> pure unit
+        Right (Run t) -> do
+          env <- get
+          logShow $ norm env t
+        Right (Let v t) ->
+          modify $ M.insert v t
+      repl'

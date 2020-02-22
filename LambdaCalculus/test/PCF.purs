@@ -1,16 +1,14 @@
 module Test.PCF (testPCF) where
 
 import Prelude
-import Data.Tuple (Tuple(..), snd)
+import Data.Tuple (Tuple(..))
 import Data.Either (Either(..))
-import Data.Map as M
 import Data.String.Utils (lines)
 import Effect (Effect)
-import PCF (PCFLine(..), Term(..), Type(..), program, line)
+import PCF (PCFLine(..), Term(..), Type(..), repl, line)
 import Run (extract)
 import Run.Console (runConsoleAccum)
 import Run.Node.ReadLine (runReadLineAccum)
-import Run.State (runState)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -28,7 +26,7 @@ testPCF = runTest do
         (runParser "true = λx y.x" line)
   suite "PCF repl" do
     test "let-polymorphism" do
-      let program' = """
+      let program = """
         two = succ (succ 0)
         three = succ two
         add = fix (\f m n.ifz m then n else f (pred m) (succ n))
@@ -37,7 +35,7 @@ testPCF = runTest do
         mul three three
         let id = \x.x in id succ (id three)  -- Let-polymorphism.
         """
-      let res = runProgram program'
+      let res = runRepl program
       let expected = [ "[two : Nat]"
                      , "[three : Nat]"
                      , "[add : Nat -> Nat -> Nat]"
@@ -48,7 +46,7 @@ testPCF = runTest do
                      ]
       Assert.equal expected res
     test "sort" do
-      let program' = """
+      let program = """
         -- Insertion sort sans fixpoint. Slow.
         pair=\x y f.f x y
         fst=\p.p(\x y.x)
@@ -63,7 +61,7 @@ testPCF = runTest do
         sort=\l.l ins nil
         sort (cons 3(cons 1(cons 4(cons 1(cons 5 nil)))))
         """
-      let res = runProgram program'
+      let res = runRepl program
       let expected = [ "[pair : _0 -> _1 -> (_0 -> _1 -> _4) -> _4]"
                      , "[fst : ((_1 -> _2 -> _1) -> _3) -> _3]"
                      , "[snd : ((_1 -> _2 -> _2) -> _3) -> _3]"
@@ -79,14 +77,14 @@ testPCF = runTest do
                      ]
       Assert.equal expected res
     test "list sum" do
-      let program' = """
+      let program = """
         add=fix (\f m n.ifz m then n else f (pred m) (succ n))
         nil=\c n.n
         cons=\h t c n.c h(t c n)
         sum=\xs:(I->I->I)->I->I.xs(\h:I t:I.add h t)0
         sum (cons 1 (cons 125 (cons 27 nil)))
         """
-      let res = runProgram program'
+      let res = runRepl program
       let expected = [ "[add : Nat -> Nat -> Nat]"
                      , "[nil : _0 -> _1 -> _1]"
                      , "[cons : _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
@@ -95,11 +93,9 @@ testPCF = runTest do
                      ]
       Assert.equal expected res
 
-runProgram :: String -> Array String
-runProgram p =
-  program
+runRepl :: String -> Array String
+runRepl p =
+  repl
     # runReadLineAccum (lines p)
     # runConsoleAccum
-    # runState (Tuple [] M.empty)
     # extract
-    # snd

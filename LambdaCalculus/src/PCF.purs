@@ -7,7 +7,7 @@ module PCF
   , eval
   , line
   , norm
-  , program
+  , repl
   ) where
 
 import Prelude hiding (between)
@@ -29,7 +29,7 @@ import Data.Tuple (Tuple(..), lookup, snd)
 import Run (Run)
 import Run.Console (CONSOLE, error, log, logShow)
 import Run.Node.ReadLine (READLINE, prompt, setPrompt)
-import Run.State (STATE, get, modify)
+import Run.State (get, modify, runState)
 import Text.Parsing.Parser (Parser, fail, runParser)
 import Text.Parsing.Parser.Combinators (between, chainr1, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
@@ -402,31 +402,30 @@ dbi ix term = case term of
 -- REPL
 type Env = Tuple Gamma Lets
 
-program :: forall r. Run ( state :: STATE Env
-                         , readline :: READLINE
-                         , console :: CONSOLE
-                         | r) Unit
-program = do
-  setPrompt "λ> "
-  input <- prompt
-  when (input /= "\\d") do
-    case runParser input line of
-      Left err ->
-        error $ "parse error: " <> show err
-      Right Blank -> pure unit
-      Right (Run term) -> do
-        Tuple gamma lets <- get
-        case typeOf gamma term of
-          Left msg -> error $ "bad type: " <> msg
-          Right t -> do
-            logShow $ norm lets term
-      Right (TopLet s term) -> do
-        Tuple gamma lets <- get
-        case typeOf gamma term of
-          Left msg -> error $ "bad type: " <> msg
-          Right t -> do
-            log $ "[" <> s <> " : " <> show t <> "]"
-            let gamma' = Tuple s (generalize S.empty t) : gamma
-            let lets' = M.insert s term lets
-            modify $ const (Tuple gamma' lets')
-    program
+repl :: forall r. Run (readline :: READLINE , console :: CONSOLE | r) (Tuple Env Unit)
+repl = runState (Tuple [] M.empty) repl'
+  where
+  repl' = do
+    setPrompt "λ> "
+    input <- prompt
+    when (input /= "\\d") do
+      case runParser input line of
+        Left err ->
+          error $ "parse error: " <> show err
+        Right Blank -> pure unit
+        Right (Run term) -> do
+          Tuple gamma lets <- get
+          case typeOf gamma term of
+            Left msg -> error $ "bad type: " <> msg
+            Right t -> do
+              logShow $ norm lets term
+        Right (TopLet s term) -> do
+          Tuple gamma lets <- get
+          case typeOf gamma term of
+            Left msg -> error $ "bad type: " <> msg
+            Right t -> do
+              log $ "[" <> s <> " : " <> show t <> "]"
+              let gamma' = Tuple s (generalize S.empty t) : gamma
+              let lets' = M.insert s term lets
+              modify $ const (Tuple gamma' lets')
+      repl'

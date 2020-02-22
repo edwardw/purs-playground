@@ -2,15 +2,13 @@ module Test.LambdaCalculus (testLambdaCalculus) where
 
 import Prelude
 import Data.Either (Either(..))
-import Data.String.Utils (lines)
-import Data.Tuple (snd)
 import Data.Map as M
+import Data.String.Utils (lines)
 import Effect (Effect)
-import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, program, term)
+import LambdaCalculus (Term(..), LambdaLine(..), eval, line, norm, repl, term)
 import Run (extract)
 import Run.Console (runConsoleAccum)
 import Run.Node.ReadLine (runReadLineAccum)
-import Run.State (runState)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -94,17 +92,17 @@ testLambdaCalculus = runTest do
         (norm M.empty <$> runParser "(λm. λn. λs. λz. m s (n z s))(λs. λz. s z)" term)
   suite "lambda calculus repl" do
     test "2^3" do
-      let program' = """
+      let program = """
         2 = λf x -> f (f x)
         3 = λf x -> f (f (f x))
         exp = λm n -> n m
         exp 2 3"""
 
-      let res = runProgram program'
+      let res = runRepl program
       let expected = ["λx.λx.x@1(x@1(x@1(x@1(x@1(x@1(x@1(x@1 x)))))))"]
       Assert.equal expected res
     test "factorial" do
-      let program' = """
+      let program = """
         true = λx y -> x
         false = λx y -> y
         0 = λf x -> x
@@ -116,20 +114,20 @@ testLambdaCalculus = runTest do
         Y = λf -> (λx -> x x)(λx -> f(x x))
         fact = Y(λf n -> (is0 n) 1 (mul n (f (pred n))))
         fact (succ (succ (succ 1)))  -- Compute 4!"""
-      let res = runProgram program'
+      let res = runRepl program
       let expected = ["λf.λx.f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1(f@1 x)))))))))))))))))))))))"]
       Assert.equal expected res
     test "quote" do
-      let program' = """
+      let program = """
         Var = λm.λa b c.a m
         App = λm n.λa b c.b m n
         Lam = λf.λa b c.c f
         quote ((λy.y) x)"""
-      let res = runProgram program'
+      let res = runRepl program
       let expected = ["λa.λb.λc.b@1(λa.λb.λc.c(λy.λa.λb.λc.a@2 y@3))(λa.λb.λc.a@2 x@6)"]
       Assert.equal expected res
     test "quoted self-interpreter and self-reducer" do
-      let program' = """
+      let program = """
         Y = λf.(λx.f(x x))(λx.f(x x))
         E = Y(λe m.m (λx.x) (λm n.(e m)(e n)) (λm v.e (m v)))
         P = Y(λp m.(λx.x(λv.p(λa b c.b m(v (λa b.b))))m))
@@ -139,17 +137,15 @@ testLambdaCalculus = runTest do
         succ = λn f x.f(n f x)
         E (quote (succ (succ (succ 1))))
         R (quote (succ (succ (succ 1))))"""
-      let res = runProgram program'
+      let res = runRepl program
       let expected = [ "λv.λv.v@1(v@1(v@1(v@1 v)))"
                      , "λa.λb.λc.c(λw.λa.λb.λc.c(λw.λa.λb.λc.b@1(λa.λb.λc.a@2 w@10)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@13)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@16)(λa.λb.λc.b@1(λa.λb.λc.a@2 w@19)(λa.λb.λc.a@2 w@15))))))"
                      ]
       Assert.equal expected res
 
-runProgram :: String -> Array String
-runProgram p =
-  program
+runRepl :: String -> Array String
+runRepl p =
+  repl
     # runReadLineAccum (lines p)
     # runConsoleAccum
-    # runState M.empty
     # extract
-    # snd
