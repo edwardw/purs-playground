@@ -235,7 +235,7 @@ instance substitutablePType :: Substitutable PType where
 newtype Gamma = Env (Map Name PType)
 
 instance showEnv :: Show Gamma where
-  show (Env env) = "Γ = { " <> intercalate "\n    , " showBindings <> "    }"
+  show (Env env) = "Γ = { " <> intercalate "\n    , " showBindings <> " }"
     where
     bindings = M.toUnfoldable env :: Array (Tuple Name PType)
     showBinding (Tuple (Name n) pt) = n <> " : " <> show pt
@@ -547,11 +547,15 @@ infer env term = case term of
 -- | This means that if `Γ` *literally contains* (`∈`) a value, then it also
 -- | *entails it* (`⊢`) in all its instantiations.
 inferVar :: forall r. Gamma -> Name -> Infer r (Tuple Subst MType)
-inferVar env name = do
-  sigma <- lookupEnv env name -- x:σ ∈ Γ
-  tau <- instantiate sigma   -- τ = instantiate(σ)
-                              -- ------------------
-  pure $ Tuple mempty tau     -- Γ ⊢ x:τ
+inferVar env name = case name of
+  Name s | Just _ <- fromString s ->
+    -- hack: `Var` with numerical name are interpreted as integers
+    pure $ Tuple mempty TNat
+  _ -> do
+    sigma <- lookupEnv env name -- x:σ ∈ Γ
+    tau <- instantiate sigma   -- τ = instantiate(σ)
+                                -- ------------------
+    pure $ Tuple mempty tau     -- Γ ⊢ x:τ
 
 
 lookupEnv :: forall r. Gamma -> Name -> Infer r PType
