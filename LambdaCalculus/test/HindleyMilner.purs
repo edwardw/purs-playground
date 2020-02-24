@@ -41,17 +41,17 @@ testHindleyMilner = runTest do
         "λf.λg.λx.f x(g x) :: ∀_2 _4 _5. (_2 -> _4 -> _5) -> (_2 -> _4) -> _2 -> _5"
         (showType prelude $ lambda [Name "f", Name "g", Name "x"] (app (var "f") [var "x", app (var "g") [var "x"]]))
       Assert.equal
-        "succ 42 :: ∀∅. Nat"
-        (showType prelude $ app (var "succ") [var "42"])
+        "succ(42) :: ∀∅. Nat"
+        (showType prelude $ app (var "succ") [Nat 42])
       Assert.equal
-        "succ(succ 0) :: ∀∅. Nat"
-        (showType prelude $ app (var "succ") [app (var "succ") [(var "0")]])
+        "succ(succ(0)) :: ∀∅. Nat"
+        (showType prelude $ app (var "succ") [app (var "succ") [Nat 0]])
       Assert.equal
-        "succ(succ(succ 0)) :: ∀∅. Nat"
-        (showType prelude $ app (var "succ") [app (var "succ") [app (var "succ") [(var "0")]]])
+        "succ(succ(succ(0))) :: ∀∅. Nat"
+        (showType prelude $ app (var "succ") [app (var "succ") [app (var "succ") [Nat 0]]])
       Assert.equal
-        "let id = λx.x in id succ(id(succ(succ(succ 0)))) :: ∀∅. Nat"
-        (showType prelude $ Let (Name "id") (lambda [Name "x"] (var "x")) (app (var "id") [var "succ", app (var "id") [app (var "succ") [app (var "succ") [app (var "succ") [var "0"]]]]]))
+        "let id = λx.x in id succ(id(succ(succ(succ(0))))) :: ∀∅. Nat"
+        (showType prelude $ Let (Name "id") (lambda [Name "x"] (var "x")) (app (var "id") [var "succ", app (var "id") [app (var "succ") [app (var "succ") [app (var "succ") [Nat 0]]]]]))
 
 
 

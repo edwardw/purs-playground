@@ -26,7 +26,7 @@ import Run.State (STATE, evalState, get, put)
 import Text.Parsing.Parser (Parser, fail)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
-import Text.Parsing.Parser.Token (alphaNum)
+import Text.Parsing.Parser.Token (alphaNum, digit)
 
 
 
@@ -391,17 +391,14 @@ runInfer = evalState infiniteNames <<< runExcept
 -- | The unification of two `MType`s is the most general substitution that can be
 -- | applied to both of them in order to yield the same result.
 unify :: forall r. Tuple MType MType -> Infer r Subst
-unify mts = go mts
+unify = case _ of
+  Tuple (TFn a b) (TFn x y) -> unifyBinary (Tuple a b) (Tuple x y)
+  Tuple (TVar v)  x         -> v `bindVariableTo` x
+  Tuple x         (TVar v)  -> v `bindVariableTo` x
+  Tuple TNat      TNat      -> pure mempty
+  Tuple a         b         -> throw $ CannotUnify a b
+
   where
-    go mts' = case mts' of
-      Tuple (TFn a b) (TFn x y) -> do
-        s1 <- go $ Tuple a x
-        s2 <- go <<< applySubst s1 $ Tuple b y
-        pure $ s1 <> s2
-      Tuple (TVar v)  x         -> v `bindVariableTo` x
-      Tuple x         (TVar v)  -> v `bindVariableTo` x
-      Tuple TNat      TNat      -> pure mempty
-      Tuple a         b         -> throw $ CannotUnify a b
 
     -- Build a substitution that binds a `Name` of a `TVar` to a `MType`. The
     -- resulting substitution should be idempotent.
@@ -418,6 +415,16 @@ unify mts = go mts
       _                      -> pure <<< Subst $ M.singleton name mt
       where
       occursIn n ty = n `S.member` freeMType ty
+
+
+-- | Unification of binary type constructors, such as functions. Unification
+-- | is first done for the first pair, and assuming the required substitution,
+-- | for the second one.
+unifyBinary :: forall r. Tuple MType MType -> Tuple MType MType -> Infer r Subst
+unifyBinary (Tuple a b) (Tuple x y) = do
+  s1 <- unify $ Tuple a x
+  s2 <- unify $ applySubst s1 (Tuple b y)
+  pure $ s1 <> s2
 
 
 
@@ -574,15 +581,11 @@ infer env term = case term of
 -- | This means that if `Γ` *literally contains* (`∈`) a value, then it also
 -- | *entails it* (`⊢`) in all its instantiations.
 inferVar :: forall r. Gamma -> Name -> Infer r (Tuple Subst MType)
-inferVar env name = case name of
-  Name s | Just _ <- fromString s ->
-    -- hack: `Var` with numerical name are interpreted as integers
-    pure $ Tuple mempty TNat
-  _ -> do
-    sigma <- lookupEnv env name -- x:σ ∈ Γ
-    tau <- instantiate sigma   -- τ = instantiate(σ)
-                                -- ------------------
-    pure $ Tuple mempty tau     -- Γ ⊢ x:τ
+inferVar env name = do
+  sigma <- lookupEnv env name -- x:σ ∈ Γ
+  tau <- instantiate sigma    -- τ = instantiate(σ)
+                              -- ------------------
+  pure $ Tuple mempty tau     -- Γ ⊢ x:τ
 
 
 lookupEnv :: forall r. Gamma -> Name -> Infer r PType
@@ -653,7 +656,7 @@ line = between ws eof <<<
   <|> (Run <$> term)
   where
     term   = dbi M.empty <$> term'
-    term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p
+    term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p <|> nat
 
     letx p = Let <$> (str "let" *> var) <*> (str "=" *> p)
       <*> (str "in" *> p)
@@ -666,13 +669,19 @@ line = between ws eof <<<
     lam1   = str "."
 
     app p  = foldl App <$> app0 p <*> many (app0 p)
-    app0 p = flip Var (Dbi 0) <$> var <|> between (str "(") (str ")") p
+    app0 p = nat <|> flip Var (Dbi 0) <$> var <|> between (str "(") (str ")") p
 
-    var = try $ do
+    var = do
       s <- fromCharArray <$> some alphaNum
       when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
       ws
       pure $ Name s
+
+    nat = try $ do
+      n <- fromString <<< fromCharArray <$> some digit
+      case n of
+        Just n' -> pure $ Nat n'
+        Nothing -> fail "not a number"
 
     str = (_ *> ws) <<< string
 
@@ -683,7 +692,8 @@ line = between ws eof <<<
 type DebruijnIx = Map Name Dbi
 
 
--- | Assign De Bruijn indices to `Var` terms, eliminating the need of renaming them.
+-- | Assign De Bruijn indices to `Var` terms, eliminating the need of
+-- | renaming them.
 dbi :: DebruijnIx -> Term -> Term
 dbi ix term = case term of
   Var s _   -> Var s <<< fromMaybe (Dbi 0) $ M.lookup s ix
