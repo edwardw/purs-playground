@@ -22,7 +22,7 @@ import Data.Tuple (Tuple(..), uncurry)
 import Data.Unfoldable (replicateA)
 import Run (Run, SProxy(..))
 import Run.Console (CONSOLE, error, log, logShow)
-import Run.Except (EXCEPT, runExceptAt, throwAt)
+import Run.Except (EXCEPT, catchAt, runExceptAt, throwAt)
 import Run.Node.ReadLine (READLINE, prompt, setPrompt)
 import Run.State (STATE, evalState, evalStateAt, get, getAt, modify, modifyAt, putAt)
 import Text.Parsing.Parser (Parser, fail, runParser)
@@ -587,16 +587,19 @@ infer env t = case t of
 -- | *entails it* (`⊢`) in all its instantiations.
 inferVar :: forall r. Gamma -> Name -> Infer r (Tuple Subst MType)
 inferVar env name = do
-  sigma <- lookupEnv env name -- x:σ ∈ Γ
+  sigma <- lookupGamma env name -- x:σ ∈ Γ
   tau <- instantiate sigma    -- τ = instantiate(σ)
                               -- ------------------
   pure $ Tuple mempty tau     -- Γ ⊢ x:τ
 
 
-lookupEnv :: forall r. Gamma -> Name -> Infer r PType
-lookupEnv (Gamma env) name = case M.lookup name env of
-  Just x  -> pure x
-  Nothing -> throwAt _infererr $ UnknownIdentifier name
+lookupGamma :: forall r. Gamma -> Name -> Infer r PType
+lookupGamma (Gamma env) name
+  | name == Name "undefined" = Forall S.empty <$> fresh
+  | otherwise =
+    case M.lookup name env of
+      Just x  -> pure x
+      Nothing -> throwAt _infererr $ UnknownIdentifier name
 
 
 instantiate :: forall r. PType -> Infer r MType
@@ -706,7 +709,9 @@ term = dbi M.empty <$> term'
   nat = try $ do
     n <- fromString <<< fromCharArray <$> some digit
     case n of
-      Just n' -> pure $ Nat n'
+      Just n' -> do
+        ws
+        pure $ Nat n'
       Nothing -> fail "not a number"
 
 
@@ -769,6 +774,14 @@ _evalenv = SProxy :: SProxy "evalenv"
 data EvalError
   = ZeroHasNoPred
   | ExpectNat String
+  | Undefined
+
+
+instance showEvalError :: Show EvalError where
+  show = case _ of
+    ZeroHasNoPred -> "ZeroHasNoPred"
+    ExpectNat msg -> "ExpectNat: " <> msg
+    Undefined     -> "Undefined"
 
 
 -- | Evaluate a value in an evaluation context.
@@ -786,6 +799,7 @@ eval t = do
   env <- getAt _evalenv
   case t of
     Var s _ | Just t' <- M.lookup s env -> eval t'
+            | s == Name "undefined"     -> throwAt _evalerr Undefined
 
     App e e' -> do
       e'' <- eval e
@@ -810,9 +824,10 @@ eval t = do
     Ifz x e e' -> do
       nat <- eval x
       case nat of
-        Nat 0 -> eval e
-        Nat _ -> eval e'
-        t'    -> throwAt _evalerr <<< ExpectNat $ show t'
+        Nat 0   -> eval e
+        Nat _   -> eval e'
+        Var _ _ -> pure t
+        t'      -> throwAt _evalerr <<< ExpectNat $ show t'
 
     _ -> pure t
 
@@ -919,6 +934,8 @@ repl
    . Run (console :: CONSOLE, readline :: READLINE | r)
          (Either EvalError (Either InferError Unit))
 repl = go
+  # catchAt _infererr logShow
+  # catchAt _evalerr logShow
   # evalState prelude
   # runInfer
   # runEval
