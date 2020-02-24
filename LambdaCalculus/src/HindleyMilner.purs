@@ -18,12 +18,14 @@ import Data.Set (Set)
 import Data.Set as S
 import Data.String.CodeUnits (fromCharArray)
 import Data.String.Utils (words)
-import Data.Tuple (Tuple(..))
+import Data.Tuple (Tuple(..), uncurry)
 import Data.Unfoldable (replicateA)
 import Run (Run, SProxy(..))
-import Run.Except (EXCEPT, runExcept, runExceptAt, throw, throwAt)
-import Run.State (STATE, evalState, evalStateAt, get, getAt, put)
-import Text.Parsing.Parser (Parser, fail)
+import Run.Console (CONSOLE, error, log, logShow)
+import Run.Except (EXCEPT, runExceptAt, throwAt)
+import Run.Node.ReadLine (READLINE, prompt, setPrompt)
+import Run.State (STATE, evalState, evalStateAt, get, getAt, modify, modifyAt, putAt)
+import Text.Parsing.Parser (Parser, fail, runParser)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
 import Text.Parsing.Parser.Token (alphaNum, digit)
@@ -339,7 +341,10 @@ instance substitutableSubst :: Substitutable Subst where
 -- #############################################################################
 -- ** Inference context
 -- #############################################################################
-type Infer r a = Run (except :: EXCEPT InferError, state :: STATE (LL.List Name) | r) a
+type Infer r a = Run (infererr :: EXCEPT InferError, inferenv :: STATE (LL.List Name) | r) a
+
+_infererr = SProxy :: SProxy "infererr"
+_inferenv = SProxy :: SProxy "inferenv"
 
 
 -- | Errors that can happen during the type inference process.
@@ -373,7 +378,7 @@ runInfer
   :: forall r a
    . Infer r a
   -> Run r (Either InferError a)
-runInfer = evalState infiniteNames <<< runExcept
+runInfer = evalStateAt _inferenv infiniteNames <<< runExceptAt _infererr
   where
   infiniteNames = map (\i -> Name $ "_" <> show i) $ LL.iterate (_ + 1) 0
 
@@ -396,7 +401,7 @@ unify = case _ of
   Tuple (TVar v)  x         -> v `bindVariableTo` x
   Tuple x         (TVar v)  -> v `bindVariableTo` x
   Tuple TNat      TNat      -> pure mempty
-  Tuple a         b         -> throw $ CannotUnify a b
+  Tuple a         b         -> throwAt _infererr $ CannotUnify a b
 
   where
 
@@ -411,7 +416,7 @@ unify = case _ of
     -- the *Occurs Check*.
     bindVariableTo name mt = case mt of
       TVar v | name == v     -> pure mempty
-      _ | name `occursIn` mt -> throw $ OccursCheckFailed name mt
+      _ | name `occursIn` mt -> throwAt _infererr $ OccursCheckFailed name mt
       _                      -> pure <<< Subst $ M.singleton name mt
       where
       occursIn n ty = n `S.member` freeMType ty
@@ -533,12 +538,12 @@ instance showPCFLine :: Show PCFLine where
 fresh :: forall r. Infer r MType
 fresh = drawFromSupply >>= case _ of
   Right name -> pure $ TVar name
-  Left err   -> throw err
+  Left err   -> throwAt _infererr err
   where
   drawFromSupply = do
-    names <- get
+    names <- getAt _inferenv
     let { head, tail } = fromMaybe { head: Name "_", tail: LL.nil } $ LL.uncons names
-    put tail
+    putAt _inferenv tail
     pure $ Right head
 
 
@@ -567,7 +572,7 @@ infer env t = case t of
   Lam x e    -> inferLam env x e
   Nat _      -> pure $ Tuple (Subst M.empty) TNat
   Let x e e' -> inferLet env x e e'
-  Ifz b e e' -> pure $ Tuple (Subst M.empty) TNat
+  Ifz b e e' -> inferIfz env b e e'
 
 
 -- | Inferring the type of a variable is done via
@@ -591,7 +596,7 @@ inferVar env name = do
 lookupEnv :: forall r. Gamma -> Name -> Infer r PType
 lookupEnv (Gamma env) name = case M.lookup name env of
   Just x  -> pure x
-  Nothing -> throw $ UnknownIdentifier name
+  Nothing -> throwAt _infererr $ UnknownIdentifier name
 
 
 instantiate :: forall r. PType -> Infer r MType
@@ -632,6 +637,22 @@ inferLet env x e e' = do
   let env'' = extendGamma env' $ Tuple x sigma
   Tuple s2 tau' <- infer env'' e'
   pure $ Tuple (s1 <> s2) tau'
+
+
+inferIfz :: forall r. Gamma -> Term -> Term -> Term -> Infer r (Tuple Subst MType)
+inferIfz env b e e' = do
+  Tuple s1 bTau <- infer env b
+  s2 <- unify $ Tuple TNat bTau
+
+  resTau <- fresh
+  Tuple s3 eTau <- infer env e
+  Tuple s4 eTau' <- infer env e'
+  s5 <- unify $ Tuple resTau eTau
+  let resTau' = applySubst s5 resTau
+  s6 <- unify $ Tuple resTau' eTau'
+
+  pure $ Tuple (s1 <> s2 <> s3 <> s4 <> s5 <> s6) resTau'
+
 
 
 generalize :: Gamma -> MType -> PType
@@ -865,3 +886,65 @@ shift d c t = case t of
   where
   rec = shift d c
 
+
+
+
+-- #############################################################################
+-- #############################################################################
+-- * REPL
+-- #############################################################################
+-- #############################################################################
+
+
+
+-- #############################################################################
+-- ** Prelude
+-- #############################################################################
+
+
+-- | Some predefined types.
+prelude :: Gamma
+prelude = Gamma $ M.fromFoldable
+  [ Tuple (Name "pred")   (Forall S.empty (TFn TNat TNat))
+  , Tuple (Name "succ")   (Forall S.empty (TFn TNat TNat))
+  , Tuple (Name "fix")    (Forall (S.singleton nameFix) (TFn (TFn tyFix tyFix) tyFix))
+  ]
+  where
+  nameFix = Name "__fix"
+  tyFix = TVar nameFix
+
+
+repl
+  :: forall r
+   . Run (console :: CONSOLE, readline :: READLINE | r)
+         (Either EvalError (Either InferError Unit))
+repl = go
+  # evalState prelude
+  # runInfer
+  # runEval
+
+  where
+
+  go = do
+    setPrompt "λ> "
+    input <- prompt
+    when (input /= "\\d") do
+      case runParser input line of
+        Left err ->
+          error $ "parse error: " <> show err
+        Right Blank -> pure unit
+        Right (Run lambda) -> do
+          _ <- typeOf lambda
+          res <- norm lambda
+          logShow res
+        Right (TopLet s lambda) -> do
+          ty <- typeOf lambda
+          log $ "[" <> show s <> " : " <> show ty <> "]"
+          modify $ \(Gamma gamma) -> Gamma $ M.insert s ty gamma
+          modifyAt _evalenv $ M.insert s lambda
+      go
+
+  typeOf t = do
+    gamma <- get
+    t # infer gamma
+      # map (generalize gamma <<< uncurry applySubst)

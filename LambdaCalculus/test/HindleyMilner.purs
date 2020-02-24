@@ -5,9 +5,12 @@ import Data.Either (Either(..))
 import Data.Tuple (Tuple(..), uncurry)
 import Data.Map as M
 import Data.Set as S
+import Data.String.Utils (lines)
 import Effect (Effect)
-import HindleyMilner (Dbi(..), Gamma(..), MType(..), Name(..), PCFLine(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, line, runInfer, term)
+import HindleyMilner (Dbi(..), Gamma(..), MType(..), Name(..), PCFLine(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, line, prelude, repl, runInfer, term)
 import Run (extract)
+import Run.Console (runConsoleAccum)
+import Run.Node.ReadLine (runReadLineAccum)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -59,24 +62,27 @@ testHindleyMilner = runTest do
         (Right $ TopLet (Name "true") (Lam (Name "x") (Lam (Name "y") (Var (Name "x") (Dbi 1)))))
         (runParser "true = λx y.x" line)
 
-
--- Some functions to help testing before the parsing and evaluation are integrated.
-prelude :: Gamma
-prelude = Gamma $ M.fromFoldable
-  [ Tuple (Name "pred")   (Forall S.empty (TNat ~> TNat))
-  , Tuple (Name "succ")   (Forall S.empty (TNat ~> TNat))
-  , Tuple (Name "fix")    (Forall (S.singleton $ Name "a") ((tvar "a" ~> tvar "a") ~> tvar "a"))
-  ]
-
-
-tvar :: String -> MType
-tvar = TVar <<< Name
-
-
-fn :: MType -> MType -> MType
-fn = TFn
-
-infixr 9 fn as ~>
+  suite "PCF repl" do
+    test "let-polymorphism" do
+      let program = """
+        two = succ (succ 0)
+        three = succ two
+        add = fix (\f m n.ifz m then n else f (pred m) (succ n))
+        mul = fix (\f t m n.ifz m then t else f (add t n) (pred m) n) 0
+        add two three
+        mul three three
+        let id = \x.x in id succ (id three)  -- Let-polymorphism.
+        """
+      let res = runRepl program
+      let expected = [ "[two : ∀∅. Nat]"
+                     , "[three : ∀∅. Nat]"
+                     , "[add : ∀∅. Nat -> Nat -> Nat]"
+                     , "[mul : ∀∅. Nat -> Nat -> Nat]"
+                     , "5"
+                     , "9"
+                     , "4"
+                     ]
+      Assert.equal expected res
 
 
 showType :: Gamma -> Term -> String
@@ -88,3 +94,11 @@ showType env term =
         # extract of
     Left err -> "Erro referring type of " <> show term <> ": " <> show err
     Right ty -> show term <> " :: " <> show ty
+
+
+runRepl :: String -> Array String
+runRepl p =
+  repl
+    # runReadLineAccum (lines p)
+    # runConsoleAccum
+    # extract
