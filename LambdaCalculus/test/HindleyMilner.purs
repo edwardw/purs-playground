@@ -7,7 +7,7 @@ import Data.Tuple (Tuple(..), uncurry)
 import Data.Map as M
 import Data.Set as S
 import Effect (Effect)
-import HindleyMilner (Gamma(..), MType(..), Name(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, runInfer)
+import HindleyMilner (Dbi(..), Gamma(..), MType(..), Name(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, runInfer)
 import Run (extract)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
@@ -32,13 +32,13 @@ testHindleyMilner = runTest do
       Assert.equal sigma' (applySubst subst sigma)
     test "type inferring" do
       Assert.equal
-        "λx:_.x :: ∀_0. _0 -> _0"
+        "λx.x :: ∀_0. _0 -> _0"
         (showType prelude $ lambda [Name "x"] (var "x"))
       Assert.equal
         "fix succ :: ∀∅. Nat"
         (showType prelude $ app (var "fix") [var "succ"])
       Assert.equal
-        "λf:_.λg:_.λx:_.f x(g x) :: ∀_2 _4 _5. (_2 -> _4 -> _5) -> (_2 -> _4) -> _2 -> _5"
+        "λf.λg.λx.f x(g x) :: ∀_2 _4 _5. (_2 -> _4 -> _5) -> (_2 -> _4) -> _2 -> _5"
         (showType prelude $ lambda [Name "f", Name "g", Name "x"] (app (var "f") [var "x", app (var "g") [var "x"]]))
       Assert.equal
         "succ 42 :: ∀∅. Nat"
@@ -50,14 +50,14 @@ testHindleyMilner = runTest do
         "succ(succ(succ 0)) :: ∀∅. Nat"
         (showType prelude $ app (var "succ") [app (var "succ") [app (var "succ") [(var "0")]]])
       Assert.equal
-        "let id = λx:_.x in id succ(id(succ(succ(succ 0)))) :: ∀∅. Nat"
+        "let id = λx.x in id succ(id(succ(succ(succ 0)))) :: ∀∅. Nat"
         (showType prelude $ Let (Name "id") (lambda [Name "x"] (var "x")) (app (var "id") [var "succ", app (var "id") [app (var "succ") [app (var "succ") [app (var "succ") [var "0"]]]]]))
 
 
 
 -- Some functions to help testing before the parsing and evaluation are integrated.
 prelude :: Gamma
-prelude = Env $ M.fromFoldable
+prelude = Gamma $ M.fromFoldable
   [ Tuple (Name "pred")   (Forall S.empty (TNat ~> TNat))
   , Tuple (Name "succ")   (Forall S.empty (TNat ~> TNat))
   , Tuple (Name "fix")    (Forall (S.singleton $ Name "a") ((tvar "a" ~> tvar "a") ~> tvar "a"))
@@ -69,7 +69,7 @@ tvar = TVar <<< Name
 
 
 lambda :: Array Name -> Term -> Term
-lambda names term = foldr Lam term $ map (flip Tuple (tvar "_")) names
+lambda names term = foldr Lam term names
 
 
 app :: Term -> Array Term -> Term
@@ -77,7 +77,7 @@ app = foldl App
 
 
 var :: String -> Term
-var name = Var (Name name) 0
+var name = Var (Name name) (Dbi 0)
 
 
 fn :: MType -> MType -> MType
@@ -88,6 +88,6 @@ infixr 9 fn as ~>
 
 showType :: Gamma -> Term -> String
 showType env term =
-  case extract <<< runInfer <<< map (generalize (Env mempty) <<< uncurry applySubst) <<< infer env $ term of
+  case extract <<< runInfer <<< map (generalize (Gamma mempty) <<< uncurry applySubst) <<< infer env $ term of
     Left err -> "Erro referring type of " <> show term <> ": " <> show err
     Right ty -> show term <> " :: " <> show ty

@@ -232,26 +232,26 @@ instance substitutablePType :: Substitutable PType where
 -- |    map show      ∀ f a. Functor f => Show a -> f a -> f String
 -- |    ...
 -- |    ```
-newtype Gamma = Env (Map Name PType)
+newtype Gamma = Gamma (Map Name PType)
 
 instance showEnv :: Show Gamma where
-  show (Env env) = "Γ = { " <> intercalate "\n    , " showBindings <> " }"
+  show (Gamma env) = "Γ = { " <> intercalate "\n    , " showBindings <> " }"
     where
     bindings = M.toUnfoldable env :: Array (Tuple Name PType)
-    showBinding (Tuple (Name n) pt) = n <> " : " <> show pt
+    showBinding (Tuple (Name n) ptype) = n <> " : " <> show ptype
     showBindings = map showBinding bindings
 
 --| The free variables of an environment are all the free variables of the
 --| `PType`s it contains.
 freeEnv :: Gamma -> Set Name
-freeEnv (Env env) =
+freeEnv (Gamma env) =
   let all = M.values env
   in S.unions $ map freePType all
 
 -- | Performing a substitution in an environment means performing that
 -- | substitution on all the contained `PType`s.
 instance substitutableEnv :: Substitutable Gamma where
-  applySubst s (Env env) = Env $ map (applySubst s) env
+  applySubst s (Gamma env) = Gamma $ map (applySubst s) env
 
 
 
@@ -443,36 +443,51 @@ unify mts = go mts
 -- *** The language: PCF
 -- -----------------------------------------------------------------------------
 
+-- | De Bruijn Index
+newtype Dbi = Dbi Int
+
+derive instance eqDbi :: Eq Dbi
+
 data Term
-  = Var Name Int
+  = Var Name Dbi
   | App Term Term
-  | Lam (Tuple Name MType) Term
-  | Ifz Term Term Term
+  | Lam Name Term
+
+  -- Natural number literal
+  | Nat Int
+
   | Let Name Term Term
+  | Ifz Term Term Term
 
 derive instance eqTerm :: Eq Term
 
 instance showTerm :: Show Term where
-  show (Lam (Tuple x t) y) = showLam x t y
+  show (Lam x y) = showLam x y
     where
-    showLam x' t' y'             = "λ" <> show x' <> ":" <> show t' <> "." <> showB y'
-    showB (Lam (Tuple x' t') y') = showLam x' t' y'
-    showB expr                   = show expr
+    showLam x' y'     = "λ" <> show x' <> "." <> showB y'
+    showB (Lam x' y') = showLam x' y'
+    showB expr        = show expr
+
   show (Var s i) = showVar s i
+
   show (App x y) = showL x <> showR y
     where
     showL (Lam _ _) = "(" <> show x <> ")"
     showL _         = show x
     showR (Var s i) = " " <> showVar s i
     showR _         = "(" <> show y <> ")"
+
+  show (Nat i)     = show i
+
   show (Ifz x y z) =
     "ifz " <> show x <> " then " <> show y <> " else " <> show z
+
   show (Let x y z) =
     "let " <> show x <> " = " <> show y <> " in " <> show z
 
-showVar :: Name -> Int -> String
-showVar (Name s) i = s
-  <> if i == 0 || (isJust $ fromString s) then mempty else "@"
+showVar :: Name -> Dbi -> String
+showVar (Name s) (Dbi i) = s
+  <> if i == 0 then mempty else "@"
   <> show i
 
 data PCFLine
@@ -519,7 +534,7 @@ fresh = drawFromSupply >>= case _ of
 -- |    Γ, x:σ  ≡  extendEnv Γ (x,σ)
 -- |    ```
 extendEnv :: Gamma -> Tuple Name PType -> Gamma
-extendEnv (Env env) (Tuple name pt) = Env $ M.insert name pt env
+extendEnv (Gamma env) (Tuple name pt) = Gamma $ M.insert name pt env
 
 
 -- -----------------------------------------------------------------------------
@@ -529,11 +544,12 @@ extendEnv (Env env) (Tuple name pt) = Env $ M.insert name pt env
 
 infer :: forall r. Gamma -> Term -> Infer r (Tuple Subst MType)
 infer env term = case term of
-  Var name _        -> inferVar env name
-  App f x           -> inferApp env f x
-  Let x e e'        -> inferLet env x e e'
-  Lam (Tuple x _) e -> inferLam env x e
-  Ifz b e e'        -> pure $ Tuple (Subst M.empty) (TNat)
+  Var name _ -> inferVar env name
+  App f x    -> inferApp env f x
+  Lam x e    -> inferLam env x e
+  Nat _      -> pure $ Tuple (Subst M.empty) TNat
+  Let x e e' -> inferLet env x e e'
+  Ifz b e e' -> pure $ Tuple (Subst M.empty) TNat
 
 
 -- | Inferring the type of a variable is done via
@@ -559,7 +575,7 @@ inferVar env name = case name of
 
 
 lookupEnv :: forall r. Gamma -> Name -> Infer r PType
-lookupEnv (Env env) name = case M.lookup name env of
+lookupEnv (Gamma env) name = case M.lookup name env of
   Just x  -> pure x
   Nothing -> throw $ UnknownIdentifier name
 
