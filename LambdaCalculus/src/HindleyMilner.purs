@@ -20,9 +20,9 @@ import Data.String.CodeUnits (fromCharArray)
 import Data.String.Utils (words)
 import Data.Tuple (Tuple(..))
 import Data.Unfoldable (replicateA)
-import Run (Run)
-import Run.Except (EXCEPT, runExcept, throw)
-import Run.State (STATE, evalState, get, put)
+import Run (Run, SProxy(..))
+import Run.Except (EXCEPT, runExcept, runExceptAt, throw, throwAt)
+import Run.State (STATE, evalState, evalStateAt, get, getAt, put)
 import Text.Parsing.Parser (Parser, fail)
 import Text.Parsing.Parser.Combinators (between, option, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
@@ -549,10 +549,10 @@ fresh = drawFromSupply >>= case _ of
 -- | in formal definition:
 -- |
 -- |    ```
--- |    Γ, x:σ  ≡  extendEnv Γ (x,σ)
+-- |    Γ, x:σ  ≡  extendGamma Γ (x,σ)
 -- |    ```
-extendEnv :: Gamma -> Tuple Name PType -> Gamma
-extendEnv (Gamma env) (Tuple name pt) = Gamma $ M.insert name pt env
+extendGamma :: Gamma -> Tuple Name PType -> Gamma
+extendGamma (Gamma env) (Tuple name pt) = Gamma $ M.insert name pt env
 
 
 -- -----------------------------------------------------------------------------
@@ -561,7 +561,7 @@ extendEnv (Gamma env) (Tuple name pt) = Gamma $ M.insert name pt env
 
 
 infer :: forall r. Gamma -> Term -> Infer r (Tuple Subst MType)
-infer env term = case term of
+infer env t = case t of
   Var name _ -> inferVar env name
   App f x    -> inferApp env f x
   Lam x e    -> inferLam env x e
@@ -619,7 +619,7 @@ inferLam :: forall r. Gamma -> Name -> Term -> Infer r (Tuple Subst MType)
 inferLam env x e = do
   tau <- fresh
   let sigma = Forall S.empty tau
-  let env' = extendEnv env (Tuple x sigma)
+  let env' = extendGamma env (Tuple x sigma)
   Tuple s tau' <- infer env' e
   pure <<< Tuple s $ TFn (applySubst s tau) tau'
 
@@ -629,7 +629,7 @@ inferLet env x e e' = do
   Tuple s1 tau <- infer env e
   let env' = applySubst s1 env
   let sigma = generalize env' tau
-  let env'' = extendEnv env' $ Tuple x sigma
+  let env'' = extendGamma env' $ Tuple x sigma
   Tuple s2 tau' <- infer env'' e'
   pure $ Tuple (s1 <> s2) tau'
 
@@ -654,38 +654,55 @@ line = between ws eof <<<
   option Blank $
   try (TopLet <$> var <*> (str "=" *> term))
   <|> (Run <$> term)
+
+
+term :: Parser String Term
+term = dbi M.empty <$> term'
   where
-    term   = dbi M.empty <$> term'
-    term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p <|> nat
+  term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p <|> nat
 
-    letx p = Let <$> (str "let" *> var) <*> (str "=" *> p)
-      <*> (str "in" *> p)
+  lam p  = flip (foldr Lam)
+       <$> between lam0 lam1 (some var)
+       <*> p
+  lam0   = str "\\" <|> str "λ"
+  lam1   = str "."
 
-    ifz p  = Ifz <$> (str "ifz" *> p) <*> (str "then" *> p)
-      <*> (str "else" *> p)
+  app p  = foldl App <$> app0 p <*> many (app0 p)
+  app0 p = nat
+       <|> flip Var (Dbi 0) <$> var
+       <|> between (str "(") (str ")") p
 
-    lam p  = flip (foldr Lam) <$> between lam0 lam1 (some var) <*> p
-    lam0   = str "\\" <|> str "λ"
-    lam1   = str "."
+  letx p = Let
+    <$> (str "let" *> var)
+    <*> (str "="   *> p)
+    <*> (str "in"  *> p)
 
-    app p  = foldl App <$> app0 p <*> many (app0 p)
-    app0 p = nat <|> flip Var (Dbi 0) <$> var <|> between (str "(") (str ")") p
+  ifz p  = Ifz
+    <$> (str "ifz"  *> p)
+    <*> (str "then" *> p)
+    <*> (str "else" *> p)
 
-    var = do
-      s <- fromCharArray <$> some alphaNum
-      when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
-      ws
-      pure $ Name s
+  nat = try $ do
+    n <- fromString <<< fromCharArray <$> some digit
+    case n of
+      Just n' -> pure $ Nat n'
+      Nothing -> fail "not a number"
 
-    nat = try $ do
-      n <- fromString <<< fromCharArray <$> some digit
-      case n of
-        Just n' -> pure $ Nat n'
-        Nothing -> fail "not a number"
 
-    str = (_ *> ws) <<< string
+str :: String -> Parser String Unit
+str = (_ *> ws) <<< string
 
-    ws  = whiteSpace *> optional (try $ string "--" *> many anyChar)
+
+var :: Parser String Name
+var = try $ do
+  s <- fromCharArray <$> some alphaNum
+  when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
+  ws
+  pure $ Name s
+
+
+ws :: Parser String Unit
+ws  = whiteSpace *> optional (try $ string "--" *> many anyChar)
 
 
 -- | De Bruijn Indices
@@ -695,7 +712,7 @@ type DebruijnIx = Map Name Dbi
 -- | Assign De Bruijn indices to `Var` terms, eliminating the need of
 -- | renaming them.
 dbi :: DebruijnIx -> Term -> Term
-dbi ix term = case term of
+dbi ix t = case t of
   Var s _   -> Var s <<< fromMaybe (Dbi 0) $ M.lookup s ix
   Lam s m   -> Lam s $ dbi (ix' s) m
   App m n   -> App (dbi ix m) (dbi ix n)
@@ -707,3 +724,144 @@ dbi ix term = case term of
   -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
   -- it starts fresh.
   ix' s = M.insert s (Dbi 0) $ map (\(Dbi i) -> Dbi $ i + 1) ix
+
+
+
+
+-- #############################################################################
+-- #############################################################################
+-- * Evaluation
+-- #############################################################################
+-- #############################################################################
+
+
+-- #############################################################################
+-- ** Evaluation context
+-- #############################################################################
+type Eval r a = Run (evalerr :: EXCEPT EvalError, evalenv :: STATE (Map Name Term) | r) a
+
+_evalerr = SProxy :: SProxy "evalerr"
+_evalenv = SProxy :: SProxy "evalenv"
+
+
+-- | Errors that can happen during evaluation process.
+data EvalError
+  = ZeroHasNoPred
+  | ExpectNat String
+
+
+-- | Evaluate a value in an evaluation context.
+runEval
+  :: forall r a
+   . Eval r a
+  -> Run r (Either EvalError a)
+runEval = evalStateAt _evalenv M.empty <<< runExceptAt _evalerr
+
+
+-- The interesting this is, once we are certain a closed term is well-types,
+-- we can ignore the types and evaluate as we would in untyped lambda calculus.
+eval :: forall r. Term -> Eval r Term
+eval t = do
+  env <- getAt _evalenv
+  case t of
+    Var s _ | Just t' <- M.lookup s env -> eval t'
+
+    App e e' -> do
+      e'' <- eval e
+      case e'' of
+        Lam x f -> eval $ beta f x e'
+        Var (Name "pred") _ -> do
+          nat <- eval e'
+          case nat of
+            Nat 0 -> throwAt _evalerr ZeroHasNoPred
+            Nat i -> pure $ Nat (i - 1)
+            t'    -> pure $ App e'' t'
+        Var (Name "succ") _ -> do
+          nat <- eval e'
+          case nat of
+            Nat i -> pure $ Nat (i + 1)
+            t'    -> pure $ App e'' t'
+        Var (Name "fix") _ -> eval $ App e' (App e'' e')
+        _ -> pure $ App e'' e'
+
+    Let x e e' -> eval $ beta e' x e
+
+    Ifz x e e' -> do
+      nat <- eval x
+      case nat of
+        Nat 0 -> eval e
+        Nat _ -> eval e'
+        t'    -> throwAt _evalerr <<< ExpectNat $ show t'
+
+    _ -> pure t
+
+
+norm :: forall r. Term -> Eval r Term
+norm t = do
+  t' <- eval t
+  case t' of
+    v@(Var _ _) -> pure v
+    Lam x f     -> Lam x <$> norm f
+    App e e'    -> App   <$> norm e <*> norm e'
+    Let x e e'  -> Let x <$> norm e <*> norm e'
+    Ifz x e e'  -> Ifz   <$> norm x <*> norm e <*> norm e'
+    n@(Nat _)   -> pure n
+
+
+-- Beta reduction under De Bruijn Index:
+--
+--    (λ. t) u ~> ↑(-1,0)(t[0 := ↑(1,0)u])
+--
+beta :: Term -> Name -> Term -> Term
+beta t v u = shift (-1) 0 <<< subst t v (Dbi 0) $ shift 1 0 u
+
+
+-- De Bruijn Substitution: The substitution of a term `s` for variable number
+-- `j` in a term `t`, written `t[j := s]`, is defined as follows:
+--
+--    k[j := s]       =  | s  if k = j
+--                       | k  otherwise
+--    (λ. t)[j := s]  =  λ. t[j+1 := ↑(1,0)s]
+--    (t u)[j := s]   =  (t[j := s]  u[j := s])
+--
+subst :: Term -> Name -> Dbi -> Term -> Term
+subst t v j@(Dbi j') s = case t of
+  Var x k | x == v && k == j -> s
+          | otherwise        -> t
+  Lam x m | x == v    -> t
+          | otherwise -> Lam x (subst m v (Dbi $ j'+1) (shift 1 0 s))
+  App m n   -> App (rec m) (rec n)
+  Let y m n -> Let y (rec m) (rec n)
+  Ifz m n o -> Ifz (rec m) (rec n) (rec o)
+  n@(Nat _) -> n
+  where
+  rec t' = subst t' v j s
+
+
+-- De Bruijn Shifting: The `d`-place shift of a term t above cutoff `c`, written
+-- `↑(d,c)t`, is defined as follows:
+--
+--    ↑(d,c)k       =  | k     if k < c
+--                     | k + d if k >= c
+--    ↑(d,c)(λ. t)  =  λ. ↑(d,c+1)t
+--    ↑(d,c)(t u)   =  (↑(d,c)t ↑(d,c)u)
+--
+-- The `Let` term acts as a binder, so the term `n` in:
+--
+--    let s = m in n
+--
+-- should also has cutoff `c + 1`.
+--
+shift :: Int -> Int -> Term -> Term
+shift d c t = case t of
+  Var s k@(Dbi k')
+    | k' < c    -> Var s k
+    | otherwise -> Var s (Dbi $ k'+d)
+  Lam s t'      -> Lam s $ shift d (c+1) t'
+  App m n       -> App (rec m) (rec n)
+  Let s m n     -> Let s (rec m) (shift d (c+1) n)
+  Ifz m n o     -> Ifz (rec m) (rec n) (rec o)
+  n@(Nat _)     -> n
+  where
+  rec = shift d c
+
