@@ -4,21 +4,29 @@
 module HindleyMilner where
 
 import Prelude hiding (between)
-import Data.Array (zip)
+import Control.Alt ((<|>))
+import Control.Lazy (fix)
+import Data.Array (many, some, zip)
 import Data.Either (Either(..))
-import Data.Foldable (intercalate, notElem)
+import Data.Foldable (elem, foldl, foldr, intercalate, notElem)
 import Data.Int (fromString)
 import Data.List.Lazy as LL
 import Data.Map (Map)
 import Data.Map as M
-import Data.Maybe (Maybe(..), fromMaybe, isJust)
+import Data.Maybe (Maybe(..), fromMaybe)
 import Data.Set (Set)
 import Data.Set as S
+import Data.String.CodeUnits (fromCharArray)
+import Data.String.Utils (words)
 import Data.Tuple (Tuple(..))
 import Data.Unfoldable (replicateA)
 import Run (Run)
 import Run.Except (EXCEPT, runExcept, throw)
 import Run.State (STATE, evalState, get, put)
+import Text.Parsing.Parser (Parser, fail)
+import Text.Parsing.Parser.Combinators (between, option, optional, try)
+import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
+import Text.Parsing.Parser.Token (alphaNum)
 
 
 
@@ -333,6 +341,7 @@ instance substitutableSubst :: Substitutable Subst where
 -- #############################################################################
 type Infer r a = Run (except :: EXCEPT InferError, state :: STATE (LL.List Name) | r) a
 
+
 -- | Errors that can happen during the type inference process.
 data InferError
   -- | Twp types that don't match were attempted to be unified.
@@ -350,6 +359,7 @@ data InferError
 
   -- | The value of an unknown identifier was read.
   | UnknownIdentifier Name
+
 
 instance showInferError :: Show InferError where
   show = case _ of
@@ -448,6 +458,7 @@ newtype Dbi = Dbi Int
 
 derive instance eqDbi :: Eq Dbi
 
+
 data Term
   = Var Name Dbi
   | App Term Term
@@ -492,7 +503,7 @@ showVar (Name s) (Dbi i) = s
 
 data PCFLine
   = Blank
-  | TopLet String Term
+  | TopLet Name Term
   | Run Term
 
 derive instance eqPCFLine :: Eq PCFLine
@@ -624,3 +635,65 @@ generalize :: Gamma -> MType -> PType
 generalize env mt = Forall qs mt
   where
   qs = freeMType mt `S.difference` freeEnv env
+
+
+
+
+-- #############################################################################
+-- #############################################################################
+-- * Parsing
+-- #############################################################################
+-- #############################################################################
+
+
+line :: Parser String PCFLine
+line = between ws eof <<<
+  option Blank $
+  try (TopLet <$> var <*> (str "=" *> term))
+  <|> (Run <$> term)
+  where
+    term   = dbi M.empty <$> term'
+    term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p
+
+    letx p = Let <$> (str "let" *> var) <*> (str "=" *> p)
+      <*> (str "in" *> p)
+
+    ifz p  = Ifz <$> (str "ifz" *> p) <*> (str "then" *> p)
+      <*> (str "else" *> p)
+
+    lam p  = flip (foldr Lam) <$> between lam0 lam1 (some var) <*> p
+    lam0   = str "\\" <|> str "λ"
+    lam1   = str "."
+
+    app p  = foldl App <$> app0 p <*> many (app0 p)
+    app0 p = flip Var (Dbi 0) <$> var <|> between (str "(") (str ")") p
+
+    var = try $ do
+      s <- fromCharArray <$> some alphaNum
+      when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
+      ws
+      pure $ Name s
+
+    str = (_ *> ws) <<< string
+
+    ws  = whiteSpace *> optional (try $ string "--" *> many anyChar)
+
+
+-- | De Bruijn Indices
+type DebruijnIx = Map Name Dbi
+
+
+-- | Assign De Bruijn indices to `Var` terms, eliminating the need of renaming them.
+dbi :: DebruijnIx -> Term -> Term
+dbi ix term = case term of
+  Var s _   -> Var s <<< fromMaybe (Dbi 0) $ M.lookup s ix
+  Lam s m   -> Lam s $ dbi (ix' s) m
+  App m n   -> App (dbi ix m) (dbi ix n)
+  i@(Nat _) -> i
+  Let s m n -> Let s (dbi ix m) $ dbi (ix' s) n
+  Ifz m n o -> Ifz (dbi ix m) (dbi ix n) (dbi ix o)
+  where
+  -- The `Lam` and `Let` terms are binders, so increase every known `Var`s
+  -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
+  -- it starts fresh.
+  ix' s = M.insert s (Dbi 0) $ map (\(Dbi i) -> Dbi $ i + 1) ix
