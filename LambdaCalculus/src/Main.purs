@@ -4,7 +4,7 @@ import Prelude
 import Effect (Effect)
 import Effect.Class (liftEffect)
 import Effect.Aff (bracket, launchAff_)
-import HindleyMilner as HM
+import PCF as PCF
 import Run (runBaseAff')
 import Run.Console (runConsole)
 import Run.Node.ReadLine (runReadLine)
@@ -16,7 +16,7 @@ main = launchAff_ $ bracket
   (liftEffect $ RL.createConsoleInterface RL.noCompletion)
   (liftEffect <<< RL.close)
   (\iface ->
-    HM.repl
+    PCF.repl
       # runReadLine
       # runConsole
       # runReader iface
