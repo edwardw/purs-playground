@@ -193,6 +193,26 @@ instance showPType :: Show PType where
       | otherwise    = intercalate " " $ S.map show qs
 
 
+
+-- #############################################################################
+-- ** Prelude
+-- #############################################################################
+
+
+-- | Our little language has some predefined types.
+prelude :: Gamma
+prelude = Gamma $ M.fromFoldable
+  [ Tuple (Name "pred")       (Forall S.empty (TFn TNat TNat))
+  , Tuple (Name "succ")       (Forall S.empty (TFn TNat TNat))
+  , Tuple (Name "fix")        (Forall (S.singleton nameFix) (TFn (TFn tyFix tyFix) tyFix))
+  , Tuple (Name "undefined")  (Forall S.empty (TVar $ Name "undefined"))
+  ]
+  where
+  nameFix = Name "_fix"
+  tyFix = TVar nameFix
+
+
+
 -- | The free variables of a `PType` are the free variables of contained
 -- | `MType`, except those universally quantified.
 freePType :: PType -> Set Name
@@ -663,9 +683,8 @@ inferLam
   -> Term -- ^ λx. __e__
   -> Infer r (Tuple Subst MType)
 inferLam env@(Gamma g) x e = do
-  tau <- case M.lookup x g of
-    Just xSigma -> instantiate xSigma            -- if `x` has type annotation:
-                                                 -- τ = instantiate(σ)
+  tau <- case M.lookup x g of                    -- if `x` has type annotation:
+    Just xSigma -> instantiate xSigma            -- τ = instantiate(σ)
                                                  -- otherwise:
     Nothing     -> fresh                         -- τ = fresh
   let sigma = Forall S.empty tau                 -- σ = ∀∅. τ
@@ -701,7 +720,7 @@ inferLet
   -> Infer r (Tuple Subst MType)
 inferLet env x e e' = do
   Tuple s1 tau <- infer env e                  -- Γ ⊢ e:τ
-  let env' = applySubst s1 env
+  let env'  = applySubst s1 env
       sigma = generalize env' tau              -- σ = gen(Γ,τ)
       env'' = extendGamma env' $ Tuple x sigma -- Γ, x:σ
   Tuple s2 tau' <- infer env'' e'              -- Γ ⊢ ...
@@ -802,7 +821,7 @@ term = dbi M.empty <$> term'
       Just mt -> do
         let sigma = Forall (freeMType mt) mt
         lift $ tell (Gamma $ M.singleton v sigma)
-      Nothing  -> pure unit
+      Nothing -> pure unit
     pure v
 
   app p  = foldl App <$> app0 p <*> many (app0 p)
@@ -1022,39 +1041,60 @@ shift d c t = case t of
 -- #############################################################################
 
 
-
--- #############################################################################
--- ** Prelude
--- #############################################################################
-
-
--- | Some predefined types.
-prelude :: Gamma
-prelude = Gamma $ M.fromFoldable
-  [ Tuple (Name "pred")       (Forall S.empty (TFn TNat TNat))
-  , Tuple (Name "succ")       (Forall S.empty (TFn TNat TNat))
-  , Tuple (Name "fix")        (Forall (S.singleton nameFix) (TFn (TFn tyFix tyFix) tyFix))
-  , Tuple (Name "undefined")  (Forall S.empty (TVar $ Name "undefined"))
-  ]
-  where
-  nameFix = Name "fix"
-  tyFix = TVar nameFix
-
-
+-- | The read-evaluation-print-loop.
+-- |
+-- | This is where every piece of machinery we build so far comes together. Most
+-- | importantly, all states finally get interpreted,
+-- |
+-- |    - the fresh type variable names supply in type inference context
+-- |    - the types of names known so far
+-- |    - the top-level let bindings seen so far
+-- |
+-- | They all are handled with different "granularity":
+-- |
+-- |    - at first glance, the type variable names are totally internal to the
+-- |      inference functions, why would the REPL care? Well, it is sort of
+-- |      visible when printing out types. If being left alone, those numbered
+-- |      type variable names would just keep growing for the whole REPL
+-- |      session, which is not very desirable. For that reason, `runInfer` is
+-- |      run at the line level, so that each input line gets its type variables
+-- |      starting from zero.
+-- |
+-- |    - the top-level let bindings. They are truly internal to the evaluation
+-- |      functions. The REPL users can't interact with them.
+-- |
+-- |    - the type environment, gamma. Its main concern is how the exceptions
+-- |      are handled. The first draft caught both inference and evaluation
+-- |      exception at the very top of REPL loop, and then started a brand new
+-- |      loop. We lost the gamma. It has since been changed. Now the prelude,
+-- |      the initial gamma, is fed to the REPL at the very top and both
+-- |      exception are handled on the lower levels. If either exceptions is
+-- |      thrown, it won't wipe out the current gamma.
+-- |
+-- |    - The gamma again. Many type inference functions take an explicit gamma
+-- |      argument instead of getting it from inference context. It has its pros
+-- |      and cons. The main down side is being too explicit, an extra argument
+-- |      after all. It is only part of the state effects at the REPL level.
+-- |      However, every input line may contains type annotation, which should
+-- |      be used to extend the current gamma, but only for the current line.
+-- |      The subsequent lines don't care. In fact, if the type annotations are
+-- |      made persistent, they interfere with the subsequent type inference. If
+-- |      the gamma were part of the state of inference context, the REPL then
+-- |      have to extend it after seeing type annotation and restore it to
+-- |      previous gamma after a line is type-inferred and evaluated. Since the
+-- |      gamma argument is explicit, the REPL can simply retrieve it from its
+-- |      own state, extends it, call type inference with extended version and
+-- |      be done with it.
 repl
   :: forall r
-   . Run (console :: CONSOLE, readline :: READLINE | r)
-         (Either EvalError Unit)
-repl = do
-  res <- go # evalState prelude # runEval
-  case res of
+   . Run (console :: CONSOLE, readline :: READLINE | r) (Either EvalError Unit)
+repl = evalState prelude repl'
+  where
+  repl' = runEval go >>= case _ of
     Left err -> do
       error $ "eval error: " <> show err
-      repl
-    _ -> pure res
-
-
-  where
+      repl'
+    res -> pure res
 
   go = do
     setPrompt "λ> "
@@ -1062,7 +1102,7 @@ repl = do
     when (input /= "\\d") do
       let Tuple exp ann = runWriter $ runParserT input line
       gamma <- get
-      let annotatedGamma = over2 Gamma M.union gamma ann
+      let annotatedGamma = over2 Gamma M.union ann gamma
       case exp of
         Left err ->
           error $ "parse error: " <> show err
@@ -1074,7 +1114,7 @@ repl = do
             Left err -> error $ "infer error: " <> show err
             Right _  -> norm lambda >>= logShow
 
-        Right (TopLet name lambda) -> do
+        Right (TopLet name lambda) ->
           typeOf annotatedGamma lambda >>= case _ of
             Left err -> error $ "infer error: " <> show err
             Right ty -> do
@@ -1083,7 +1123,7 @@ repl = do
               modifyAt _evalenv $ M.insert name lambda
       go
 
-  typeOf gamma t =
-    t # infer gamma
-      # map (generalize gamma <<< uncurry applySubst)
-      # runInfer
+  typeOf gamma exp =
+    exp # infer gamma
+        # map (generalize gamma <<< uncurry applySubst)
+        # runInfer
