@@ -6,6 +6,7 @@ You can edit this file as you like.
 , dependencies =
     [ "console"
     , "effect"
+    , "newtype"
     , "node-readline"
     , "ordered-collections"
     , "parsing"
@@ -14,6 +15,7 @@ You can edit this file as you like.
     , "run"
     , "stringutils"
     , "test-unit"
+    , "transformers"
     ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]

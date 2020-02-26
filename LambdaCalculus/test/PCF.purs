@@ -1,8 +1,9 @@
 module Test.PCF where
 
 import Prelude
+import Control.Monad.Writer (runWriter)
 import Data.Either (Either(..))
-import Data.Tuple (Tuple(..), uncurry)
+import Data.Tuple (Tuple(..), fst, uncurry)
 import Data.Map as M
 import Data.Set as S
 import Data.String.Utils (lines)
@@ -14,7 +15,7 @@ import Run.Node.ReadLine (runReadLineAccum)
 import Test.Unit (suite, test, testSkip)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
-import Text.Parsing.Parser (runParser)
+import Text.Parsing.Parser (ParseError, runParserT)
 
 testPCF :: Effect Unit
 testPCF = runTest do
@@ -36,31 +37,31 @@ testPCF = runTest do
     test "type inferring" do
       Assert.equal
         (Right $ "λx.x :: ∀_0. _0 -> _0")
-        (showType prelude <$> runParser "λx.x" term)
+        (showType prelude <$> runTerm "λx.x")
       Assert.equal
         (Right $ "fix succ :: ∀∅. Nat")
-        (showType prelude <$> runParser "fix succ" term)
+        (showType prelude <$> runTerm  "fix succ")
       Assert.equal
         (Right $ "λf.λg.λx.f@2 x(g@1 x) :: ∀_2 _4 _5. (_2 -> _4 -> _5) -> (_2 -> _4) -> _2 -> _5")
-        (showType prelude <$> runParser "λf.λg.λx.f x(g x)" term)
+        (showType prelude <$> runTerm "λf.λg.λx.f x(g x)")
       Assert.equal
         (Right $ "succ 42 :: ∀∅. Nat")
-        (showType prelude <$> runParser "succ(42)" term)
+        (showType prelude <$> runTerm "succ(42)")
       Assert.equal
         (Right $ "succ(succ 0) :: ∀∅. Nat")
-        (showType prelude <$> runParser "succ(succ(0))" term)
+        (showType prelude <$> runTerm "succ(succ(0))")
       Assert.equal
         (Right $ "let id = λx.x in id succ(id(succ(succ(succ 0)))) :: ∀∅. Nat")
-        (showType prelude <$> runParser "let id = λx.x in id succ(id(succ(succ(succ(0)))))" term)
+        (showType prelude <$> runTerm "let id = λx.x in id succ(id(succ(succ(succ(0)))))")
 
   suite "PCF" do
     test "parsing PCF line" do
       Assert.equal
         (Right $ Run (App (Lam (Name "x") (Var (Name "x") (Dbi 0))) (Var (Name "y") (Dbi 0))))
-        (runParser "(λx.x)y" line)
+        (runLine "(λx.x)y")
       Assert.equal
         (Right $ TopLet (Name "true") (Lam (Name "x") (Lam (Name "y") (Var (Name "x") (Dbi 1)))))
-        (runParser "true = λx y.x" line)
+        (runLine "true = λx y.x")
 
   suite "PCF repl" do
     test "let-polymorphism" do
@@ -114,7 +115,7 @@ testPCF = runTest do
                      , "λc:_.λn:_.c@1 1(c@1 1(c@1 3(c@1 4(c@1 5 n))))"
                      ]
       Assert.equal expected res
-    testSkip "list sum" do
+    test "list sum" do
       let program = """
         add=fix (\f m n.ifz m then n else f (pred m) (succ n))
         nil=\c n.n
@@ -123,10 +124,10 @@ testPCF = runTest do
         sum (cons 1 (cons 125 (cons 27 nil)))
         """
       let res = runRepl program
-      let expected = [ "[add : Nat -> Nat -> Nat]"
-                     , "[nil : _0 -> _1 -> _1]"
-                     , "[cons : _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
-                     , "[sum : ((Nat -> Nat -> Nat) -> Nat -> Nat) -> Nat]"
+      let expected = [ "[add : ∀∅. Nat -> Nat -> Nat]"
+                     , "[nil : ∀_0 _1. _0 -> _1 -> _1]"
+                     , "[cons : ∀_0 _3 _6 _7. _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
+                     , "[sum : ∀∅. ((Nat -> Nat -> Nat) -> Nat -> Nat) -> Nat]"
                      , "153"
                      ]
       Assert.equal expected res
@@ -141,6 +142,13 @@ showType env term =
         # extract of
     Left err -> "Erro referring type of " <> show term <> ": " <> show err
     Right ty -> show term <> " :: " <> show ty
+
+
+runTerm :: String -> Either ParseError Term
+runTerm s = fst <<< runWriter $ runParserT s term
+
+runLine :: String -> Either ParseError PCFLine
+runLine s = fst <<< runWriter $ runParserT s line
 
 
 runRepl :: String -> Array String

@@ -6,6 +6,7 @@ module PCF where
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
+import Control.Monad.Writer (Writer, lift, runWriter, tell)
 import Data.Array (many, some, zip)
 import Data.Either (Either(..))
 import Data.Foldable (elem, foldl, foldr, intercalate, notElem)
@@ -14,6 +15,7 @@ import Data.List.Lazy as LL
 import Data.Map (Map)
 import Data.Map as M
 import Data.Maybe (Maybe(..), fromMaybe)
+import Data.Newtype (class Newtype, over, over2)
 import Data.Set (Set)
 import Data.Set as S
 import Data.String.CodeUnits (fromCharArray)
@@ -25,8 +27,8 @@ import Run.Console (CONSOLE, error, log, logShow)
 import Run.Except (EXCEPT, runExceptAt, throwAt)
 import Run.Node.ReadLine (READLINE, prompt, setPrompt)
 import Run.State (STATE, evalState, evalStateAt, get, getAt, modify, modifyAt, putAt)
-import Text.Parsing.Parser (Parser, fail, runParser)
-import Text.Parsing.Parser.Combinators (between, option, optional, try)
+import Text.Parsing.Parser (ParserT, fail, runParserT)
+import Text.Parsing.Parser.Combinators (between, chainr1, option, optionMaybe, optional, try)
 import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
 import Text.Parsing.Parser.Token (alphaNum, digit)
 
@@ -243,6 +245,10 @@ instance substitutablePType :: Substitutable PType where
 -- |    ...
 -- |    ```
 newtype Gamma = Gamma (Map Name PType)
+
+derive instance newtypeGamma :: Newtype Gamma _
+derive newtype instance semigroupGamma :: Semigroup Gamma
+derive newtype instance monoidGamma :: Monoid Gamma
 
 instance showEnv :: Show Gamma where
   show (Gamma env) = "Γ = { " <> intercalate "\n    , " showBindings <> " }"
@@ -657,8 +663,12 @@ inferLam
   -> Name -- ^ λ__x__. e
   -> Term -- ^ λx. __e__
   -> Infer r (Tuple Subst MType)
-inferLam env x e = do
-  tau <- fresh                                   -- τ = fresh
+inferLam env@(Gamma g) x e = do
+  tau <- case M.lookup x g of
+    Just xSigma -> instantiate xSigma            -- if `x` has type annotation:
+                                                 -- τ = instantiate(σ)
+                                                 -- otherwise:
+    Nothing     -> fresh                         -- τ = fresh
   let sigma = Forall S.empty tau                 -- σ = ∀∅. τ
       env'  = extendGamma env (Tuple x sigma)    -- Γ, x:σ ...
   Tuple s tau' <- infer env' e                   --        ... ⊢ e:τ'
@@ -733,23 +743,38 @@ generalize env mt = Forall qs mt
 -- #############################################################################
 
 
-line :: Parser String PCFLine
+line :: ParserT String (Writer Gamma) PCFLine
 line = between ws eof <<<
   option Blank $
   try (TopLet <$> var <*> (str "=" *> term))
   <|> (Run <$> term)
 
 
-term :: Parser String Term
+term :: ParserT String (Writer Gamma) Term
 term = dbi M.empty <$> term'
   where
   term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p <|> nat
 
   lam p  = flip (foldr Lam)
-       <$> between lam0 lam1 (some var)
+       <$> between lam0 lam1 (some vt)
        <*> p
   lam0   = str "\\" <|> str "λ"
   lam1   = str "."
+  -- possible type annotations, e.g. `\xs:Nat.xs`
+  tyAnn  = fix $ \p ->
+           ((str "Nat" *> pure TNat)
+       <|> (TVar <$> var)
+       <|> (between (str "(") (str ")") p))
+           `chainr1` (str "->" *> pure TFn)
+  vt     = do
+    v   <- var
+    do
+      ann <- optionMaybe (str ":" *> tyAnn)
+      case ann of
+        Just ann' ->
+          lift $ tell (Gamma $ M.singleton v (Forall (freeMType ann') ann'))
+        Nothing   -> pure unit
+    pure v
 
   app p  = foldl App <$> app0 p <*> many (app0 p)
   app0 p = nat
@@ -775,11 +800,11 @@ term = dbi M.empty <$> term'
       Nothing -> fail "not a number"
 
 
-str :: String -> Parser String Unit
+str :: forall m. Monad m => String -> ParserT String m Unit
 str = (_ *> ws) <<< string
 
 
-var :: Parser String Name
+var :: forall m. Monad m => ParserT String m Name
 var = try $ do
   s <- fromCharArray <$> some alphaNum
   when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
@@ -787,7 +812,7 @@ var = try $ do
   pure $ Name s
 
 
-ws :: Parser String Unit
+ws :: forall m. Monad m => ParserT String m Unit
 ws  = whiteSpace *> optional (try $ string "--" *> many anyChar)
 
 
@@ -1006,29 +1031,30 @@ repl = do
     setPrompt "λ> "
     input <- prompt
     when (input /= "\\d") do
-      case runParser input line of
+      let Tuple exp ann = runWriter $ runParserT input line
+      gamma <- get
+      let annotatedGamma = over2 Gamma M.union gamma ann
+      case exp of
         Left err ->
           error $ "parse error: " <> show err
+
         Right Blank -> pure unit
-        Right (Run lambda) -> do
-          ty <- typeOf lambda
-          case ty of
+
+        Right (Run lambda) ->
+          typeOf annotatedGamma lambda >>= case _ of
             Left err -> error $ "infer error: " <> show err
-            Right _  -> do
-              res <- norm lambda
-              logShow res
-        Right (TopLet s lambda) -> do
-          ty <- typeOf lambda
-          case ty of
-            Left err  -> error $ "infer error: " <> show err
-            Right ty' -> do
-              log $ "[" <> show s <> " : " <> show ty' <> "]"
-              modify $ \(Gamma gamma) -> Gamma $ M.insert s ty' gamma
-              modifyAt _evalenv $ M.insert s lambda
+            Right _  -> norm lambda >>= logShow
+
+        Right (TopLet name lambda) -> do
+          typeOf annotatedGamma lambda >>= case _ of
+            Left err -> error $ "infer error: " <> show err
+            Right ty -> do
+              log $ "[" <> show name <> " : " <> show ty <> "]"
+              modify $ over Gamma (M.insert name ty)
+              modifyAt _evalenv $ M.insert name lambda
       go
 
-  typeOf t = do
-    gamma <- get
+  typeOf gamma t =
     t # infer gamma
       # map (generalize gamma <<< uncurry applySubst)
       # runInfer
