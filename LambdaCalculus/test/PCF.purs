@@ -8,7 +8,7 @@ import Data.Map as M
 import Data.Set as S
 import Data.String.Utils (lines)
 import Effect (Effect)
-import PCF (Dbi(..), Gamma(..), MType(..), Name(..), PCFLine(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, line, prelude, repl, runInfer, term)
+import PCF (Gamma(..), MType(..), Name(..), PCFLine(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, line, prelude, repl, runInfer, term)
 import Run (extract)
 import Run.Console (runConsoleAccum)
 import Run.Node.ReadLine (runReadLineAccum)
@@ -57,10 +57,10 @@ testPCF = runTest do
   suite "PCF" do
     test "parsing PCF line" do
       Assert.equal
-        (Right $ Run (App (Lam (Name "x") (Var (Name "x") (Dbi 0))) (Var (Name "y") (Dbi 0))))
+        (Right $ Run (App (Lam (Name "x") (Var (Name "x") 0)) (Var (Name "y") 0)))
         (runLine "(λx.x)y")
       Assert.equal
-        (Right $ TopLet (Name "true") (Lam (Name "x") (Lam (Name "y") (Var (Name "x") (Dbi 1)))))
+        (Right $ TopLet (Name "true") (Lam (Name "x") (Lam (Name "y") (Var (Name "x") 1))))
         (runLine "true = λx y.x")
 
   suite "PCF repl" do

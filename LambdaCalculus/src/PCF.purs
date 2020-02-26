@@ -472,11 +472,10 @@ unifyBinary (Tuple a b) (Tuple x y) = do
 -- -----------------------------------------------------------------------------
 
 -- | De Bruijn Index
-newtype Dbi = Dbi Int
-
-derive instance eqDbi :: Eq Dbi
+type Dbi = Int
 
 
+-- | Our little language
 data Term
   = Var Name Dbi
   | App Term Term
@@ -516,7 +515,7 @@ instance showTerm :: Show Term where
     "let " <> show x <> " = " <> show y <> " in " <> show z
 
 showVar :: Name -> Dbi -> String
-showVar (Name s) (Dbi i) = s
+showVar (Name s) i = s
   <> if i == 0 then mempty else "@"
   <> show i
 
@@ -760,25 +759,55 @@ term = dbi M.empty <$> term'
        <*> p
   lam0   = str "\\" <|> str "λ"
   lam1   = str "."
-  -- possible type annotations, e.g. `\xs:Nat.xs`
+
+  -- | Possible type annotations.
+  --
+  -- | This is a pretty interesting design choice. In our little language, a
+  -- | name in lambda abstraction can be annotated with type, e.g.
+  -- |
+  -- |    \x:Nat.x
+  -- |
+  -- | or
+  -- |
+  -- |    \x:I->I.x
+  -- |
+  -- | Conceptually, there are informations at two different levels here: the
+  -- | lambda itself (`\x.x`) is value level information, whereas the type
+  -- | annotation is type level. To represent them after being parsed, one
+  -- | simple way is to design the data structure to hold both of them:
+  -- |
+  -- |    data Term = Lam (Tuple Name (Maybe MType)) Term
+  -- |
+  -- | which makes the parsing relatively easier, but the whole program arguably
+  -- | messier. For example, the type inference process needs to pull these type
+  -- | annotations out of `Term` structure, while the evaluation process may not
+  -- | care about them at all.
+  -- |
+  -- | An (cleaner) alternative would be to separate the type data structure and
+  -- | value data structure, but how to parse the source text to produce them in
+  -- | one go? The choice here is:
+  -- |
+  -- |    ParserT s (Writer a) b
+  -- |
+  -- | The main parser returns the `Term` structure. When it encounters type
+  -- | annotations, it parses and accumulates them in the `Writer` monad.
   tyAnn  = fix $ \p ->
            ((str "Nat" *> pure TNat)
        <|> (TVar <$> var)
        <|> (between (str "(") (str ")") p))
            `chainr1` (str "->" *> pure TFn)
   vt     = do
-    v   <- var
-    do
-      ann <- optionMaybe (str ":" *> tyAnn)
-      case ann of
-        Just ann' ->
-          lift $ tell (Gamma $ M.singleton v (Forall (freeMType ann') ann'))
-        Nothing   -> pure unit
+    v <- var
+    optionMaybe (str ":" *> tyAnn) >>= case _ of
+      Just mt -> do
+        let sigma = Forall (freeMType mt) mt
+        lift $ tell (Gamma $ M.singleton v sigma)
+      Nothing  -> pure unit
     pure v
 
   app p  = foldl App <$> app0 p <*> many (app0 p)
   app0 p = nat
-       <|> flip Var (Dbi 0) <$> var
+       <|> flip Var 0 <$> var
        <|> between (str "(") (str ")") p
 
   letx p = Let
@@ -824,7 +853,7 @@ type DebruijnIx = Map Name Dbi
 -- | renaming them.
 dbi :: DebruijnIx -> Term -> Term
 dbi ix t = case t of
-  Var s _   -> Var s <<< fromMaybe (Dbi 0) $ M.lookup s ix
+  Var s _   -> Var s <<< fromMaybe 0 $ M.lookup s ix
   Lam s m   -> Lam s $ dbi (ix' s) m
   App m n   -> App (dbi ix m) (dbi ix n)
   i@(Nat _) -> i
@@ -834,7 +863,7 @@ dbi ix t = case t of
   -- The `Lam` and `Let` terms are binders, so increase every known `Var`s
   -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
   -- it starts fresh.
-  ix' s = M.insert s (Dbi 0) $ map (\(Dbi i) -> Dbi $ i + 1) ix
+  ix' s = M.insert s 0 $ map (_ + 1) ix
 
 
 
@@ -931,7 +960,7 @@ norm t = do
 --    (λ. t) u ~> ↑(-1,0)(t[0 := ↑(1,0)u])
 --
 beta :: Term -> Name -> Term -> Term
-beta t v u = shift (-1) 0 <<< subst t v (Dbi 0) $ shift 1 0 u
+beta t v u = shift (-1) 0 <<< subst t v 0 $ shift 1 0 u
 
 
 -- De Bruijn Substitution: The substitution of a term `s` for variable number
@@ -943,11 +972,11 @@ beta t v u = shift (-1) 0 <<< subst t v (Dbi 0) $ shift 1 0 u
 --    (t u)[j := s]   =  (t[j := s]  u[j := s])
 --
 subst :: Term -> Name -> Dbi -> Term -> Term
-subst t v j@(Dbi j') s = case t of
+subst t v j s = case t of
   Var x k | x == v && k == j -> s
           | otherwise        -> t
   Lam x m | x == v    -> t
-          | otherwise -> Lam x (subst m v (Dbi $ j'+1) (shift 1 0 s))
+          | otherwise -> Lam x (subst m v (j+1) (shift 1 0 s))
   App m n   -> App (rec m) (rec n)
   Let y m n -> Let y (rec m) (rec n)
   Ifz m n o -> Ifz (rec m) (rec n) (rec o)
@@ -972,9 +1001,9 @@ subst t v j@(Dbi j') s = case t of
 --
 shift :: Int -> Int -> Term -> Term
 shift d c t = case t of
-  Var s k@(Dbi k')
-    | k' < c    -> Var s k
-    | otherwise -> Var s (Dbi $ k'+d)
+  Var s k
+    | k < c     -> Var s k
+    | otherwise -> Var s (k+d)
   Lam s t'      -> Lam s $ shift d (c+1) t'
   App m n       -> App (rec m) (rec n)
   Let s m n     -> Let s (rec m) (shift d (c+1) n)
