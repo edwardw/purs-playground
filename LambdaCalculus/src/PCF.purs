@@ -11,7 +11,6 @@ import Data.Array (many, some, zip)
 import Data.Either (Either(..))
 import Data.Foldable (elem, foldl, foldr, intercalate, notElem)
 import Data.Int (fromString)
-import Data.List.Lazy as LL
 import Data.Map (Map)
 import Data.Map as M
 import Data.Maybe (Maybe(..), fromMaybe)
@@ -205,11 +204,12 @@ prelude = Gamma $ M.fromFoldable
   [ Tuple (Name "pred")       (Forall S.empty (TFn TNat TNat))
   , Tuple (Name "succ")       (Forall S.empty (TFn TNat TNat))
   , Tuple (Name "fix")        (Forall (S.singleton nameFix) (TFn (TFn tyFix tyFix) tyFix))
-  , Tuple (Name "undefined")  (Forall S.empty (TVar $ Name "undefined"))
+  , Tuple (Name "undefined")  (Forall (S.singleton nameU) (TVar nameU))
   ]
   where
   nameFix = Name "_fix"
   tyFix = TVar nameFix
+  nameU = Name "_undefined"
 
 
 
@@ -367,7 +367,7 @@ instance substitutableSubst :: Substitutable Subst where
 -- #############################################################################
 -- ** Inference context
 -- #############################################################################
-type Infer r a = Run (infererr :: EXCEPT InferError, inferenv :: STATE (LL.List Name) | r) a
+type Infer r a = Run (infererr :: EXCEPT InferError, inferenv :: STATE Int | r) a
 
 _infererr = SProxy :: SProxy "infererr"
 _inferenv = SProxy :: SProxy "inferenv"
@@ -404,9 +404,7 @@ runInfer
   :: forall r a
    . Infer r a
   -> Run r (Either InferError a)
-runInfer = evalStateAt _inferenv infiniteNames <<< runExceptAt _infererr
-  where
-  infiniteNames = map (\i -> Name $ "_" <> show i) $ LL.iterate (_ + 1) 0
+runInfer = evalStateAt _inferenv 0 <<< runExceptAt _infererr
 
 
 
@@ -563,10 +561,9 @@ instance showPCFLine :: Show PCFLine where
 -- | new name, i.e. unbounded in the current context.
 fresh :: forall r. Infer r MType
 fresh = do
-  names <- getAt _inferenv
-  let { head, tail } = fromMaybe { head: Name "_", tail: LL.nil } $ LL.uncons names
-  putAt _inferenv tail
-  pure $ TVar head
+  i <- getAt _inferenv
+  putAt _inferenv (i+1)
+  pure $ TVar (Name ("_" <> show i))
 
 
 -- | Add a new binding to the environment.
@@ -780,7 +777,7 @@ term = dbi M.empty <$> term'
   lam1   = str "."
 
   -- | Possible type annotations.
-  --
+  -- |
   -- | This is a pretty interesting design choice. In our little language, a
   -- | name in lambda abstraction can be annotated with type, e.g.
   -- |
@@ -923,7 +920,7 @@ runEval
 runEval = evalStateAt _evalenv M.empty <<< runExceptAt _evalerr
 
 
--- The interesting this is, once we are certain a closed term is well-types,
+-- The interesting thing is, once we are certain a closed term is well-types,
 -- we can ignore the types and evaluate as we would in untyped lambda calculus.
 eval :: forall r. Term -> Eval r Term
 eval t = do
@@ -1110,20 +1107,20 @@ repl = evalState prelude repl'
         Right Blank -> pure unit
 
         Right (Run lambda) ->
-          typeOf annotatedGamma lambda >>= case _ of
-            Left err -> error $ "infer error: " <> show err
-            Right _  -> norm lambda >>= logShow
+          inferTyAndActOn annotatedGamma lambda \_ ->
+            norm lambda >>= logShow
 
         Right (TopLet name lambda) ->
-          typeOf annotatedGamma lambda >>= case _ of
-            Left err -> error $ "infer error: " <> show err
-            Right ty -> do
-              log $ "[" <> show name <> " : " <> show ty <> "]"
-              modify $ over Gamma (M.insert name ty)
-              modifyAt _evalenv $ M.insert name lambda
+          inferTyAndActOn annotatedGamma lambda \ty -> do
+            log $ "[" <> show name <> " : " <> show ty <> "]"
+            modify $ over Gamma (M.insert name ty)
+            modifyAt _evalenv $ M.insert name lambda
       go
 
-  typeOf gamma exp =
+  inferTyAndActOn gamma exp action =
     exp # infer gamma
         # map (generalize gamma <<< uncurry applySubst)
         # runInfer
+    >>= case _ of
+      Left err -> error $ "infer error: " <> show err
+      Right ty -> action ty
