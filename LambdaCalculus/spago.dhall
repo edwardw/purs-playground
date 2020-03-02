@@ -12,10 +12,12 @@ You can edit this file as you like.
     , "parsing"
     , "profunctor"
     , "psci-support"
+    , "refs"
     , "run"
     , "stringutils"
     , "test-unit"
     , "transformers"
+    , "unordered-collections"
     ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
