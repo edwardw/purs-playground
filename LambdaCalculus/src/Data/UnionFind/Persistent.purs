@@ -17,7 +17,8 @@
 -- |    - or, takes the structure as argument *and* also returns an updated
 -- |      version to make it persistent
 module Data.UnionFind.Persistent
-  ( fresh
+  ( Point
+  , fresh
   , findOrInsert
   , union
   , equivalent
@@ -29,6 +30,7 @@ import Data.Map (Map)
 import Data.Map as M
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
+import Data.Typelevel.Undefined (undefined)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect.Unsafe (unsafePerformEffect)
@@ -36,25 +38,26 @@ import Effect.Unsafe (unsafePerformEffect)
 
 
 type Rank = Int
-type Point a = Tuple Rank a
+data Point a
+  = Info Rank a
+  | Link a
 type Union a = Ref (Map a (Point a))
 
 
 
-repr :: forall a. Eq a => Ord a => a -> Union a -> Maybe (Point a)
+repr :: forall a. Eq a => Ord a => a -> Union a -> Maybe (Tuple a (Point a))
 repr x u = unsafePerformEffect do
   m <- Ref.read u
   case M.lookup x m of
-    p@(Just (Tuple _ y)) ->
-      if x == y then pure p
-      else do
-        let p' = repr y u
-        case p' of
-          Just root@(Tuple _ y') ->
-            -- path compression
-            when (y /= y') (Ref.modify_ (\c -> M.insert x root c) u)
-          Nothing -> pure unit
-        pure p'
+    Just p@(Info _ _) -> pure (Just (Tuple x p))
+    Just (Link y) -> do
+      let res = repr y u
+      case res of
+        Just (Tuple y' _) ->
+          -- path compression
+          when (y /= y') (Ref.modify_ (\c -> M.insert x (Link y') c) u)
+        Nothing -> pure unit
+      pure res
     Nothing -> pure Nothing
 
 
@@ -70,26 +73,29 @@ fresh = unsafePerformEffect (Ref.new M.empty)
 findOrInsert :: forall a. Eq a => Ord a => a -> Union a -> a
 findOrInsert x u = unsafePerformEffect $
   case repr x u of
-    Just (Tuple _ y)  -> pure y
+    Just (Tuple _ (Info _ desc)) -> pure desc
+    Just (Tuple _ (Link _))      -> undefined -- unreachable
     Nothing -> do
-      let px = Tuple 0 x
+      let px = Info 0 x
       Ref.modify_ (\m -> M.insert x px m) u
       pure x
 
 
-union :: forall a. Eq a => Ord a => a -> a -> Union a -> Union a
-union x y u = unsafePerformEffect $
+union :: forall a. Eq a => Ord a => (a -> a -> a) -> a -> a -> Union a -> Union a
+union f x y u = unsafePerformEffect $
   case Tuple (repr x u) (repr y u) of
-    Tuple (Just rootx@(Tuple rx dx))
-          (Just rooty@(Tuple ry dy)) -> do
+    Tuple (Just (Tuple rootx (Info rankx descx)))
+          (Just (Tuple rooty (Info ranky descy))) -> do
       m <- Ref.read u
-      let m' =  if rx > ry then
-                  M.insert dy rootx m
-                else if ry > rx then
-                  M.insert dx rooty m
+      let m' =  if rankx > ranky then do
+                  let n = M.insert rooty (Link rootx) m
+                  M.insert rootx (Info rankx (f descx descy)) n
+                else if rooty > rootx then do
+                  let n = M.insert rootx (Link rooty) m
+                  M.insert rooty (Info ranky (f descx descy)) n
                 else do
-                  let n = M.insert dx (Tuple (rx+1) dx) m
-                  M.insert dy (Tuple ry dx) n
+                  let n = M.insert rooty (Link rootx) m
+                  M.insert rootx (Info (rankx+1) (f descx descy)) n
       Ref.new m'
 
     _ -> pure u
@@ -97,8 +103,8 @@ union x y u = unsafePerformEffect $
 
 equivalent :: forall a. Eq a => Ord a => a -> a -> Union a -> Boolean
 equivalent x y u = case Tuple px py of
-  Tuple (Just (Tuple _ x'))
-        (Just (Tuple _ y')) -> x' == y'
+  Tuple (Just (Tuple x' _))
+        (Just (Tuple y' _)) -> x' == y'
   _                         -> false
   where
   px = repr x u
@@ -106,6 +112,9 @@ equivalent x y u = case Tuple px py of
 
 
 isRepresentative :: forall a. Eq a => Ord a => a -> Union a -> Boolean
-isRepresentative x u = case repr x u of
-  Just (Tuple _ x') -> x == x'
-  Nothing           -> false
+isRepresentative x u = unsafePerformEffect do
+  m <- Ref.read u
+  case M.lookup x m of
+    Just (Info _ _) -> pure true
+    Just (Link _)   -> pure false
+    Nothing         -> pure false

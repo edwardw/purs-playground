@@ -17,6 +17,7 @@ You can edit this file as you like.
     , "stringutils"
     , "test-unit"
     , "transformers"
+    , "typelevel"
     , "unordered-collections"
     ]
 , packages = ./packages.dhall
