@@ -54,7 +54,7 @@ repr p = unsafePerformEffect do
       l'  <- Ref.read p'
       l'' <- Ref.read p''
       when (l'' /= l') (Ref.write l' p)
-      pure p'
+      pure p''
 
 
 find :: forall a. Eq a => Point a -> a
@@ -70,15 +70,17 @@ union f p1 p2 = unsafePerformEffect do
       p2' = repr p2
   l1 <- Ref.read p1'
   l2 <- Ref.read p2'
-  case Tuple l1 l2 of
-    Tuple (Info w1 desc1) (Info w2 desc2) ->
-      if w1 >= w2 then do
-        Ref.write (Link p1') p2'
-        Ref.write (Info (w1+w2) (f desc1 desc2)) p1'
-      else do
-        Ref.write (Link p2') p1'
-        Ref.write (Info (w1+w2) (f desc1 desc2)) p2'
-    _ -> pure unit
+  if l1 /= l2 then
+    case Tuple l1 l2 of
+      Tuple (Info w1 desc1) (Info w2 desc2) ->
+        if w1 >= w2 then do
+          Ref.write (Link p1') p2'
+          Ref.write (Info (w1+w2) (f desc1 desc2)) p1'
+        else do
+          Ref.write (Link p2') p1'
+          Ref.write (Info (w1+w2) (f desc1 desc2)) p2'
+      _ -> pure unit
+  else pure unit
 
 
 equivalent :: forall a. Eq a => Point a -> Point a -> Boolean

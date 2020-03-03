@@ -1,11 +1,16 @@
--- | An (untested) implementation of the paper version of persistent union find
--- | data structure.
+-- | A faithful (I think) implementation of persistent union find data structure
+-- | according to the paper
 -- |
--- | There are four differences in API between the imperative and the persistent
--- | union find data structure:
+-- |    A Persistent Union-Find Data Structure
+-- |    by Sylvain Conchon et al.
 -- |
--- |    - the three differences described in the paper version
--- |    - the `fresh` takes no argument and returns an empty collection
+-- | With regard to the API, there are three differences between this one and
+-- | the traditional imperative version:
+-- |
+-- |    1. the presence of data structure representing the collection of points
+-- |    2. a new `create` function to create an empty collection
+-- |    3. the `union` returns the updated collection, thus makes it
+-- |       *persistent*.
 -- |
 -- | It is puzzling that the paper invented its own persistent array while the
 -- | persistent collection data structures are prevalent in FP languages'
@@ -16,49 +21,57 @@
 -- |      semantic of imperative counterpart
 -- |    - or, takes the structure as argument *and* also returns an updated
 -- |      version to make it persistent
+-- |
+-- | This could be the so-called *semi-persistent*.
 module Data.UnionFind.Persistent
-  ( Point
+  ( Union
+  , Info
+  , Rank
+  , create
   , fresh
-  , findOrInsert
+  , find
   , union
   , equivalent
   , isRepresentative
   ) where
 
+
 import Prelude
-import Data.Map (Map)
-import Data.Map as M
-import Data.Maybe (Maybe(..))
+import Data.Array as A
 import Data.Tuple (Tuple(..))
-import Data.Typelevel.Undefined (undefined)
 import Effect.Ref (Ref)
 import Effect.Ref as Ref
 import Effect.Unsafe (unsafePerformEffect)
-
+import Partial.Unsafe (unsafePartial)
 
 
 type Rank = Int
-data Point a
-  = Info Rank a
-  | Link a
-type Union a = Ref (Map a (Point a))
+type Point a = Int
+type Info a =
+  { elem :: a
+  , parent :: Int
+  , rank :: Rank
+  }
+type Union a = Ref (Array (Info a))
 
 
 
-repr :: forall a. Eq a => Ord a => a -> Union a -> Maybe (Tuple a (Point a))
-repr x u = unsafePerformEffect do
-  m <- Ref.read u
-  case M.lookup x m of
-    Just p@(Info _ _) -> pure (Just (Tuple x p))
-    Just (Link y) -> do
-      let res = repr y u
-      case res of
-        Just (Tuple y' _) ->
-          -- path compression
-          when (y /= y') (Ref.modify_ (\c -> M.insert x (Link y') c) u)
-        Nothing -> pure unit
-      pure res
-    Nothing -> pure Nothing
+repr :: forall a. Point a -> Union a -> Point a
+repr p u = unsafePerformEffect do
+  arr <- Ref.read u
+  let info = unsafePartial (A.unsafeIndex arr p)
+  if p == info.parent then
+    pure p
+  else do
+    let info' = unsafePartial (A.unsafeIndex arr info.parent)
+        p''   = repr info'.parent u
+    -- path compression
+    when (info.parent /= p'')
+         (let newinfo = info { parent = p'' }
+          in Ref.modify_ (\a -> A.updateAtIndices [Tuple p newinfo] a) u
+         )
+    pure p''
+
 
 
 --------------------------------------------------------------------------------
@@ -66,55 +79,57 @@ repr x u = unsafePerformEffect do
 --------------------------------------------------------------------------------
 
 
-fresh :: forall a. Union a
-fresh = unsafePerformEffect (Ref.new M.empty)
+create :: forall a. Union a
+create = unsafePerformEffect (Ref.new [])
 
 
-findOrInsert :: forall a. Eq a => Ord a => a -> Union a -> a
-findOrInsert x u = unsafePerformEffect $
-  case repr x u of
-    Just (Tuple _ (Info _ desc)) -> pure desc
-    Just (Tuple _ (Link _))      -> undefined -- unreachable
-    Nothing -> do
-      let px = Info 0 x
-      Ref.modify_ (\m -> M.insert x px m) u
-      pure x
+fresh :: forall a. a -> Union a -> Point a
+fresh x u = unsafePerformEffect do
+  arr <- Ref.read u
+  let p = A.length arr
+      info = { elem: x, parent: p, rank: 0 }
+  Ref.modify_ (\a -> A.snoc a info) u
+  pure p
 
 
-union :: forall a. Eq a => Ord a => (a -> a -> a) -> a -> a -> Union a -> Union a
-union f x y u = unsafePerformEffect $
-  case Tuple (repr x u) (repr y u) of
-    Tuple (Just (Tuple rootx (Info rankx descx)))
-          (Just (Tuple rooty (Info ranky descy))) -> do
-      m <- Ref.read u
-      let m' =  if rankx > ranky then do
-                  let n = M.insert rooty (Link rootx) m
-                  M.insert rootx (Info rankx (f descx descy)) n
-                else if rooty > rootx then do
-                  let n = M.insert rootx (Link rooty) m
-                  M.insert rooty (Info ranky (f descx descy)) n
-                else do
-                  let n = M.insert rooty (Link rootx) m
-                  M.insert rootx (Info (rankx+1) (f descx descy)) n
-      Ref.new m'
-
-    _ -> pure u
+find :: forall a. Eq a => Point a -> Union a -> a
+find p u = unsafePerformEffect do
+  arr <- Ref.read u
+  let root = repr p u
+      info = unsafePartial (A.unsafeIndex arr root)
+  pure info.elem
 
 
-equivalent :: forall a. Eq a => Ord a => a -> a -> Union a -> Boolean
-equivalent x y u = case Tuple px py of
-  Tuple (Just (Tuple x' _))
-        (Just (Tuple y' _)) -> x' == y'
-  _                         -> false
+union :: forall a. Eq a => (a -> a -> a) -> Point a -> Point a -> Union a -> Union a
+union f px py u =
+  if rootx == rooty then u
+  else unsafePerformEffect do
+    arr <- Ref.read u
+    let x = unsafePartial (A.unsafeIndex arr rootx)
+        y = unsafePartial (A.unsafeIndex arr rooty)
+        Tuple x' y'
+          = if x.rank > y.rank then
+              Tuple (x { elem = f x.elem y.elem })
+                    (y { parent = rootx })
+            else if y.rank > x.rank then
+              Tuple (x { parent = rooty })
+                    (y { elem = f x.elem y.elem })
+            else
+              Tuple (x { elem = f x.elem y.elem, rank = x.rank + 1 })
+                    (y { parent = rootx })
+        arr' = A.updateAtIndices [Tuple rootx x', Tuple rooty y'] arr
+    Ref.new arr'
   where
-  px = repr x u
-  py = repr y u
+  rootx = repr px u
+  rooty = repr py u
 
 
-isRepresentative :: forall a. Eq a => Ord a => a -> Union a -> Boolean
-isRepresentative x u = unsafePerformEffect do
-  m <- Ref.read u
-  case M.lookup x m of
-    Just (Info _ _) -> pure true
-    Just (Link _)   -> pure false
-    Nothing         -> pure false
+equivalent :: forall a. Eq a => Point a -> Point a -> Union a -> Boolean
+equivalent px py u = (repr px u) == (repr py u)
+
+
+isRepresentative :: forall a. Point a -> Union a -> Boolean
+isRepresentative p u = unsafePerformEffect do
+  arr <- Ref.read u
+  let info = unsafePartial (A.unsafeIndex arr p)
+  pure (p == info.parent)
