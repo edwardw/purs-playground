@@ -1,68 +1,29 @@
-module Test.PCF where
+module Test.PCF (testPCF) where
 
 import Prelude
-import Control.Monad.Writer (runWriter)
+import Data.Tuple (Tuple(..))
 import Data.Either (Either(..))
-import Data.Tuple (Tuple(..), fst, uncurry)
-import Data.Map as M
-import Data.Set as S
 import Data.String.Utils (lines)
 import Effect (Effect)
-import PCF (Gamma(..), MType(..), Name(..), PCFLine(..), PType(..), Subst(..), Term(..), applySubst, freePType, generalize, infer, line, prelude, repl, runInfer, term)
+import PCF (PCFLine(..), Term(..), Type(..), repl, line)
 import Run (extract)
 import Run.Console (runConsoleAccum)
 import Run.Node.ReadLine (runReadLineAccum)
-import Test.Unit (suite, test, testSkip)
+import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
-import Text.Parsing.Parser (ParseError, runParserT)
+import Text.Parsing.Parser (runParser)
 
 testPCF :: Effect Unit
 testPCF = runTest do
-  suite "Hindley-Milner" do
-    test "freePType" do
-      let fromStr = TVar <<< Name
-      let sigma = Forall (S.singleton $ Name "a") $ TFn (fromStr "a") (TFn (fromStr "b") (fromStr "c"))
-      Assert.equal (S.fromFoldable [Name "b", Name "c"]) (freePType sigma)
-    test "substitute PType" do
-      let fromStr = TVar <<< Name
-      let sigma = Forall (S.singleton $ Name "a") $ TFn (fromStr "a") (TFn (fromStr "b") (fromStr "c"))
-      let subst = Subst $ M.fromFoldable [Tuple (Name "a") TNat, Tuple (Name "b") TNat]
-      -- substitute `a` and `b` with `Nat` in
-      --    `∀a. a -> b -> c`
-      -- should yield:
-      --    `∀a. a -> Nat -> c`
-      let sigma' = Forall (S.singleton $ Name "a") $ TFn (fromStr "a") (TFn TNat (fromStr "c"))
-      Assert.equal sigma' (applySubst subst sigma)
-    test "type inferring" do
-      Assert.equal
-        (Right $ "λx.x :: ∀_0. _0 -> _0")
-        (showType prelude <$> runTerm "λx.x")
-      Assert.equal
-        (Right $ "fix succ :: ∀∅. Nat")
-        (showType prelude <$> runTerm  "fix succ")
-      Assert.equal
-        (Right $ "λf.λg.λx.f@2 x(g@1 x) :: ∀_2 _4 _5. (_2 -> _4 -> _5) -> (_2 -> _4) -> _2 -> _5")
-        (showType prelude <$> runTerm "λf.λg.λx.f x(g x)")
-      Assert.equal
-        (Right $ "succ 42 :: ∀∅. Nat")
-        (showType prelude <$> runTerm "succ(42)")
-      Assert.equal
-        (Right $ "succ(succ 0) :: ∀∅. Nat")
-        (showType prelude <$> runTerm "succ(succ(0))")
-      Assert.equal
-        (Right $ "let id = λx.x in id succ(id(succ(succ(succ 0)))) :: ∀∅. Nat")
-        (showType prelude <$> runTerm "let id = λx.x in id succ(id(succ(succ(succ(0)))))")
-
   suite "PCF" do
     test "parsing PCF line" do
       Assert.equal
-        (Right $ Run (App (Lam (Name "x") (Var (Name "x") 0)) (Var (Name "y") 0)))
-        (runLine "(λx.x)y")
+        (Right $ Run (App (Lam (Tuple "x" (TV "_")) (Var "x" 0)) (Var "y" 0)))
+        (runParser "(λx.x)y" line)
       Assert.equal
-        (Right $ TopLet (Name "true") (Lam (Name "x") (Lam (Name "y") (Var (Name "x") 1))))
-        (runLine "true = λx y.x")
-
+        (Right $ TopLet "true" (Lam (Tuple "x" (TV "_")) (Lam (Tuple "y" (TV "_")) (Var "x" 1))))
+        (runParser "true = λx y.x" line)
   suite "PCF repl" do
     test "let-polymorphism" do
       let program = """
@@ -75,16 +36,16 @@ testPCF = runTest do
         let id = \x.x in id succ (id three)  -- Let-polymorphism.
         """
       let res = runRepl program
-      let expected = [ "[two : ∀∅. Nat]"
-                     , "[three : ∀∅. Nat]"
-                     , "[add : ∀∅. Nat -> Nat -> Nat]"
-                     , "[mul : ∀∅. Nat -> Nat -> Nat]"
+      let expected = [ "[two : Nat]"
+                     , "[three : Nat]"
+                     , "[add : Nat -> Nat -> Nat]"
+                     , "[mul : Nat -> Nat -> Nat]"
                      , "5"
                      , "9"
                      , "4"
                      ]
       Assert.equal expected res
-    testSkip "sort" do
+    test "sort" do
       let program = """
         -- Insertion sort sans fixpoint. Slow.
         pair=\x y f.f x y
@@ -124,32 +85,13 @@ testPCF = runTest do
         sum (cons 1 (cons 125 (cons 27 nil)))
         """
       let res = runRepl program
-      let expected = [ "[add : ∀∅. Nat -> Nat -> Nat]"
-                     , "[nil : ∀_0 _1. _0 -> _1 -> _1]"
-                     , "[cons : ∀_0 _3 _6 _7. _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
-                     , "[sum : ∀∅. ((Nat -> Nat -> Nat) -> Nat -> Nat) -> Nat]"
+      let expected = [ "[add : Nat -> Nat -> Nat]"
+                     , "[nil : _0 -> _1 -> _1]"
+                     , "[cons : _0 -> ((_0 -> _6 -> _7) -> _3 -> _6) -> (_0 -> _6 -> _7) -> _3 -> _7]"
+                     , "[sum : ((Nat -> Nat -> Nat) -> Nat -> Nat) -> Nat]"
                      , "153"
                      ]
       Assert.equal expected res
-
-
-showType :: Gamma -> Term -> String
-showType env term =
-  case term
-        # infer env
-        # map (generalize (Gamma mempty) <<< uncurry applySubst)
-        # runInfer
-        # extract of
-    Left err -> "Erro referring type of " <> show term <> ": " <> show err
-    Right ty -> show term <> " :: " <> show ty
-
-
-runTerm :: String -> Either ParseError Term
-runTerm s = fst <<< runWriter $ runParserT s term
-
-runLine :: String -> Either ParseError PCFLine
-runLine s = fst <<< runWriter $ runParserT s line
-
 
 runRepl :: String -> Array String
 runRepl p =

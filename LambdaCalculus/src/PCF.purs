@@ -1,37 +1,38 @@
 -- https://crypto.stanford.edu/~blynn/lambda/pcf.html
--- https://github.com/quchen/articles/blob/master/hindley-milner/src/HindleyMilner.hs
 
-module PCF where
+module PCF
+  ( PCFLine(..)
+  , Term(..)
+  , Type(..)
+  , eval
+  , line
+  , norm
+  , repl
+  ) where
 
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Lazy (fix)
-import Control.Monad.Writer (Writer, lift, runWriter, tell)
-import Data.Array (many, some, zip)
+import Data.Array (many, some, uncons, union, (:))
 import Data.Either (Either(..))
-import Data.Foldable (elem, foldl, foldr, intercalate, notElem)
+import Data.Foldable (foldMap, foldl, foldr)
 import Data.Int (fromString)
 import Data.Map (Map)
 import Data.Map as M
-import Data.Maybe (Maybe(..), fromMaybe)
-import Data.Newtype (class Newtype, over, over2)
-import Data.Set (Set)
+import Data.Maybe (Maybe(..), fromMaybe, isJust)
+import Data.Profunctor.Strong ((***))
+import Data.Set (Set, member)
 import Data.Set as S
-import Data.String.CodeUnits (fromCharArray)
-import Data.String.Utils (words)
-import Data.Tuple (Tuple(..), uncurry)
-import Data.Unfoldable (replicateA)
-import Run (Run, SProxy(..))
+import Data.Tuple (Tuple(..), lookup, snd)
+import Run (Run)
 import Run.Console (CONSOLE, error, log, logShow)
-import Run.Except (EXCEPT, runExceptAt, throwAt)
 import Run.Node.ReadLine (READLINE, prompt, setPrompt)
-import Run.State (STATE, evalState, evalStateAt, get, getAt, modify, modifyAt, putAt)
-import Text.Parsing.Parser (ParserT, fail, runParserT)
-import Text.Parsing.Parser.Combinators (between, chainr1, option, optionMaybe, optional, try)
-import Text.Parsing.Parser.String (anyChar, eof, string, whiteSpace)
-import Text.Parsing.Parser.Token (alphaNum, digit)
-
-
+import Run.State (get, modify, runState)
+import Text.Parsing.Parser (Parser, runParser)
+import Text.Parsing.Parser.Combinators (between, chainr1, option, try)
+import Text.Parsing.Parser.Language (haskellStyle)
+import Text.Parsing.Parser.String (eof, oneOf)
+import Text.Parsing.Parser.Token (GenLanguageDef(..), LanguageDef, alphaNum, makeTokenParser, unGenLanguageDef)
 
 -- | Suppose we allow local let expression:
 -- |
@@ -70,476 +71,62 @@ import Text.Parsing.Parser.Token (alphaNum, digit)
 -- | or HM for short. HM is strongly normalizing.
 -- |
 -- | We are surprisingly close to Haskell 98.
+data Type
+  = Nat
+  -- Type variable
+  | TV String
+  -- Generalized type variable
+  | GV String
+  | Fn Type Type
 
+derive instance eqType :: Eq Type
 
-
--- #############################################################################
--- #############################################################################
--- * Preliminaries
--- #############################################################################
--- #############################################################################
-
-
-
--- #############################################################################
--- ** Names
--- #############################################################################
-
-
--- | A *name* is an identifier in the PCF we are going to typecheck.
--- | Variables on both the term and type level have `Name`s, for example.
-newtype Name = Name String
-
-derive instance eqName :: Eq Name
-derive instance ordName :: Ord Name
-
-instance showName :: Show Name where
-  show (Name n) = n
-
-
-
--- #############################################################################
--- ** Monotypes
--- #############################################################################
-
-
--- | A monotype is an unquantified/unparametric type, in other words it contains
--- | no `forall`s. Monotypes are the inner building blocks of all types.
--- | Examples of mototypes are `Nat`, `a`, `a -> b`.
--- |
--- | In formal notation, `MType`s are often called τ (tau) types.
-data MType
-  = TNat
-  | TVar Name
-  | TFn MType MType
-
-derive instance eqMType :: Eq MType
-
-instance showMType :: Show MType where
-  show = case _ of
-    TNat          -> "Nat"
-    TVar (Name n) -> n
-    TFn a b       -> showL a <> " -> " <> show b
-      where
-      showL = case _ of
-        TFn _ _ -> "(" <> show a <> ")"
-        _       -> show a
-
--- | The free variables of an `MType`. This is simply the collection of all the
--- | individual type variables occurring inside of it.
--- |
--- | Example: the free variables of `a -> b` are `a` and `b`.
-freeMType :: MType -> Set Name
-freeMType = case _ of
-  TNat    -> mempty
-  TVar a  -> S.singleton a
-  TFn a b -> freeMType a <> freeMType b
-
--- | Substitute all the type variables mentioned in the substitution, and
--- | leave everything else alone.
-instance substitutableMType :: Substitutable MType where
-  applySubst s@(Subst s') mt = case mt of
-    i@TNat     -> i
-    v@(TVar a) -> fromMaybe v $ M.lookup a s'
-    TFn a b    -> TFn (applySubst s a) (applySubst s b)
-
-
-
--- #############################################################################
--- ** Polytypes
--- #############################################################################
-
-
--- | A polytype is a monotype universally quantified over a number of type
--- | variables. In Haskell, all definitions have polytypes, but since the
--- | `forall` is implicit they look a bit like monotypes. For examples, the type
--- | of `1 : Int` is actually `forall <nothing> Int`, and the type of `id` is
--- | `forall a. a -> a`.
--- |
--- | A polytype claims to work "for all imaginable type parameters", very
--- | similar to how a lambda claims to work "for imaginable value parameters".
--- | We can insert a value into a lambda's parameter to evaluate it to a new
--- | value, and similarly we'll later insert types into a polytype's quantified
--- | variables to gain new types.
--- |
--- | Example: in a definition `id :: forall a. a -> a`, the `a` after ∀
--- | (`forall`) is the collection of type variables, and `a -> a` is the `MType`
--- | quantified over. When we have such an `a`, we also have its specialized
--- | version `Int -> Int` available. This process will be the topic of the type
--- | inference/unification algorithms.
--- |
--- | In formal notation, `PType`s are often called σ (sigma) types.
--- |
--- | The purpose of having monotypes and polytypes is that we'd like to only
--- | have universal quantification at the top level, restricting our language
--- | to rank-1 polymorphism, where type inference is total (all types can be
--- | inferred) and simple (only a handful of typing rules). Weakening this
--- | constraint would be easy: if we allowed universal quantification within
--- | function types we would get rank-N polymorphism. Taking it even further
--- | to allow it anywhere, effectively replacing all occurrences of `MType`
--- | with `PType`, yields impredicative types. Both these extensions make the
--- | type system *significantly* more complex though.
-data PType = Forall (Set Name) MType -- ^ ∀{α}. τ
-
-derive instance eqPType :: Eq PType
-derive instance ordMType :: Ord MType
-
-instance showPType :: Show PType where
-  show (Forall qs mt) = "∀" <> universals <> ". " <> show mt
+instance showType :: Show Type where
+  show Nat = "Nat"
+  show (TV s) = s
+  show (GV s) = "@" <> s
+  show (Fn t u) = showL t <> " -> " <> show u
     where
-    universals
-      | S.isEmpty qs = "∅"
-      | otherwise    = intercalate " " $ S.map show qs
+    showL (Fn _ _) = "(" <> show t <> ")"
+    showL _        = show t
 
-
-
--- #############################################################################
--- ** Prelude
--- #############################################################################
-
-
--- | Our little language has some predefined types.
-prelude :: Gamma
-prelude = Gamma $ M.fromFoldable
-  [ Tuple (Name "pred")       (Forall S.empty (TFn TNat TNat))
-  , Tuple (Name "succ")       (Forall S.empty (TFn TNat TNat))
-  , Tuple (Name "fix")        (Forall (S.singleton nameFix) (TFn (TFn tyFix tyFix) tyFix))
-  , Tuple (Name "undefined")  (Forall (S.singleton nameU) (TVar nameU))
-  ]
-  where
-  nameFix = Name "_fix"
-  tyFix = TVar nameFix
-  nameU = Name "_undefined"
-
-
-
--- | The free variables of a `PType` are the free variables of contained
--- | `MType`, except those universally quantified.
-freePType :: PType -> Set Name
-freePType (Forall qs mt) = freeMType mt `S.difference` qs
-
-
--- | Substitute all free type variables.
-instance substitutablePType :: Substitutable PType where
-  applySubst (Subst s) (Forall qs mt) =
-    let s' = M.filterKeys (_ `notElem` qs) s
-    in Forall qs $ applySubst (Subst s') mt
-
-
-
--- #############################################################################
--- ** The environment
--- #############################################################################
-
-
--- | The environment consists of all the values available in scope, and their
--- | associated polytypes. Other common names for it include "(typing) context",
--- | and because of the commonly used symbol for it sometimes directly "Gamma",
--- | or Γ.
--- |
--- | There are two kinds of membership in an environment,
--- |
--- |    - ∈: an environment Γ can be viewed as a set of (value, type) pairs,
--- |      and we can test whether something us *literally contained* by it via
--- |      `x:σ ∈ Γ`
--- |    - ⊢, pronounced *entails*, describes all the things that are well-types,
--- |      given an environment Γ. `Γ ⊢ x:τ` can thus be seen as a judgment that
--- |      `x:τ` is *figuratively contained* in Γ.
--- |
--- | For example, the environment `{x:Int}` literally contains `x`, but given
--- | this, it also entails `λy. x`, `λy z. x`, `let id = λy. y in id x` and so
--- | on.
--- |
--- | In Purescript term, the environment consists of all the things you
--- | currently have available, or that can be built by combining them. If you
--- | import the Prelude, your environment entails
--- |
--- |    ```
--- |    identity      ∀ t a. Category a => a t t
--- |    map           ∀ a b f. Functor f => (a -> b) -> f a -> f b
--- |    show          ∀ a. Show a => a -> String
--- |    ...
--- |    identity map  ∀ a b f. Functor f => (a -> b) -> f a -> f b
--- |    map identity  ∀ f a. Functor f => f a -> f a
--- |    map show      ∀ f a. Functor f => Show a -> f a -> f String
--- |    ...
--- |    ```
-newtype Gamma = Gamma (Map Name PType)
-
-derive instance newtypeGamma :: Newtype Gamma _
-derive newtype instance semigroupGamma :: Semigroup Gamma
-derive newtype instance monoidGamma :: Monoid Gamma
-
-instance showEnv :: Show Gamma where
-  show (Gamma env) = "Γ = { " <> intercalate "\n    , " showBindings <> " }"
-    where
-    bindings = M.toUnfoldable env :: Array (Tuple Name PType)
-    showBinding (Tuple (Name n) ptype) = n <> " : " <> show ptype
-    showBindings = map showBinding bindings
-
---| The free variables of an environment are all the free variables of the
---| `PType`s it contains.
-freeGamma :: Gamma -> Set Name
-freeGamma (Gamma env) =
-  let all = M.values env
-  in S.unions $ map freePType all
-
--- | Performing a substitution in an environment means performing that
--- | substitution on all the contained `PType`s.
-instance substitutableEnv :: Substitutable Gamma where
-  applySubst s (Gamma env) = Gamma $ map (applySubst s) env
-
-
-
--- #############################################################################
--- ** Substitutions
--- #############################################################################
-
-
--- | A substitution is a mapping from type variables to `MType`s. Applying a
--- | substitution means applying those replacements. For example, the
--- | substitution `a -> Int` applied to `a -> a` yields `Int -> Int`.
--- |
--- | A key concept behind Hindley-Milner is that once we dive deeper into an
--- | expression, we learn more about our type variables. We might learn that
--- | `a` has to be specialized to `b -> b`, and then later on that `b` is
--- | actually `Int`. Substitutions are an organized way of carrying this
--- | information along.
-newtype Subst = Subst (Map Name MType)
-
-instance showSubst :: Show Subst where
-  show (Subst s) = "{ " <> intercalate "\n, " showSs <> " }"
-    where
-    ss = M.toUnfoldable s :: Array (Tuple Name MType)
-    showS (Tuple (Name n) mt) = n <> " --> " <> show mt
-    showSs = map showS ss
-
--- | Combine two substitutions by applying all substitutions mentioned in the
--- | first argument to the type variables contained in the second.
-instance semigroupSubst :: Semigroup Subst where
-  append s1 s2 = Subst (m1 `M.union` m2)
-    where
-    Subst m1 = s1
-    Subst m2 = applySubst s1 s2
-
-instance monoidSubst :: Monoid Subst where
-  mempty = Subst M.empty
-
--- Laws:
---
---    ```
---    applySubst mempty ≡ id
---    applySubst (s1 <> s2) ≡ applySubst s1 <<< applySubst s2
---    ```
-class Substitutable a where
-  applySubst :: Subst -> a -> a
-
-
-instance substitutableTuple
-  :: (Substitutable a, Substitutable b)
-  => Substitutable (Tuple a b) where
-  applySubst s (Tuple a b) = Tuple (applySubst s a) (applySubst s b)
-
--- | `applySubst s1 s2` applies one substitution to another, replacing all the
--- | bindings in the second argument with their values mentions in the first
--- | one.
-instance substitutableSubst :: Substitutable Subst where
-  applySubst s (Subst target) = Subst $ map (applySubst s) target
-
-
-
--- #############################################################################
--- #############################################################################
--- * Typechecking
--- #############################################################################
--- #############################################################################
-
-
--- | Typechecking does two things:
--- |
--- |  1. If two types are not immediately identical, attempt to 'unify' them
--- |     to get a type compatible with both
--- |  2. 'infer' the most general type of a value by comparing the values in its
--- |     definition with the environment
-
-
-
--- #############################################################################
--- ** Inference context
--- #############################################################################
-type Infer r a = Run (infererr :: EXCEPT InferError, inferenv :: STATE Int | r) a
-
-_infererr = SProxy :: SProxy "infererr"
-_inferenv = SProxy :: SProxy "inferenv"
-
-
--- | Errors that can happen during the type inference process.
-data InferError
-  -- | Twp types that don't match were attempted to be unified.
-  -- |
-  -- | For example, `a -> a` and `Int` don't unify.
-  = CannotUnify MType MType
-
-  -- | A `TVar` is bound to an `MType` that already contains it.
-  -- |
-  -- | The canonical example of this is `x. x x`, where the first `x` in the
-  -- | body has to have type `a -> b`, and the second one `a`. Since they're
-  -- | both the same `x`, this requires unification of `a` with `a -> b`, which
-  -- | works iff `a = a -> b = (a -> b) -> b = ...`, yielding an infinite type.
-  | OccursCheckFailed Name MType
-
-  -- | The value of an unknown identifier was read.
-  | UnknownIdentifier Name
-
-
-instance showInferError :: Show InferError where
-  show = case _ of
-    CannotUnify mt1 mt2           -> "CannotUnify: " <> show mt1 <> " with " <> show mt2
-    OccursCheckFailed (Name n) mt -> "OccursCheckFailed: " <> n <> " " <> show mt
-    UnknownIdentifier (Name n)    -> "UnknownIdentifier: " <> n
-
-
--- | Evaluate a value in an inference context.
-runInfer
-  :: forall r a
-   . Infer r a
-  -> Run r (Either InferError a)
-runInfer = evalStateAt _inferenv 0 <<< runExceptAt _infererr
-
-
-
--- #############################################################################
--- ** Unification
--- #############################################################################
-
--- Unification describes the process of making two different types compatible
--- by specializing them where needed. A desirable property to have here is being
--- able to find the most general unifier.
-
-
--- | The unification of two `MType`s is the most general substitution that can be
--- | applied to both of them in order to yield the same result.
-unify :: forall r. Tuple MType MType -> Infer r Subst
-unify = case _ of
-  Tuple (TFn a b) (TFn x y) -> unifyBinary (Tuple a b) (Tuple x y)
-  Tuple (TVar v)  x         -> v `bindVariableTo` x
-  Tuple x         (TVar v)  -> v `bindVariableTo` x
-  Tuple TNat      TNat      -> pure mempty
-  Tuple a         b         -> throwAt _infererr $ CannotUnify a b
-
-  where
-
-    -- Build a substitution that binds a `Name` of a `TVar` to a `MType`. The
-    -- resulting substitution should be idempotent.
-    --
-    -- Substituting a `Name` with a `TVar` with the same name unifies a type
-    -- variable with itself, and the resulting substitution does nothing new.
-    -- If the `Name` we are trying to bind to an `MType` already occurs in that
-    -- `MType`, the resulting substitution would not be idempotent: the `MType`
-    -- would be replaces again, yielding a different result. This is known as
-    -- the *Occurs Check*.
-    bindVariableTo name mt = case mt of
-      TVar v | name == v     -> pure mempty
-      _ | name `occursIn` mt -> throwAt _infererr $ OccursCheckFailed name mt
-      _                      -> pure <<< Subst $ M.singleton name mt
-      where
-      occursIn n ty = n `S.member` freeMType ty
-
-
--- | Unification of binary type constructors, such as functions. Unification
--- | is first done for the first pair, and assuming the required substitution,
--- | for the second one.
-unifyBinary :: forall r. Tuple MType MType -> Tuple MType MType -> Infer r Subst
-unifyBinary (Tuple a b) (Tuple x y) = do
-  s1 <- unify $ Tuple a x
-  s2 <- unify $ applySubst s1 (Tuple b y)
-  pure $ s1 <> s2
-
-
-
--- #############################################################################
--- ** Type inference
--- #############################################################################
-
--- | Type inference is the act of finding out a value's type by looking at the
--- | environment it is in, in order to make it compatible with it.
--- |
--- | In literature, the Hindley-Damas-Milner inference  algorithm ("Algorithm W")
--- | is often presented in the style of logic formulas. These formulas look a
--- | bit like fractions, where the "numerator" is a  collection of premises, and
--- | the "denominator" is the consequence if all of them hold.
--- |
--- | Example:
--- |
--- |    ```
--- |    Γ ⊢ even : Int -> Bool   Γ ⊢ 1 : Int
--- |    ------------------------------------
--- |             Γ ⊢ even 1 : Bool
--- |    ```
--- |
--- | means that if we have a value of type `Int -> Bool` called "even" and a
--- | value of type `Int` called `1`, then we also have a value of type `Bool`
--- | via `even 1` available to us.
--- |
--- | The actual inference rules are polymorphic versions of this example.
-
-
-
--- -----------------------------------------------------------------------------
--- *** The language: PCF
--- -----------------------------------------------------------------------------
-
--- | De Bruijn Index
-type Dbi = Int
-
-
--- | Our little language
 data Term
-  = Var Name Dbi
+  = Var String Int
   | App Term Term
-  | Lam Name Term
-
-  -- Natural number literal
-  | Nat Int
-
-  | Let Name Term Term
+  | Lam (Tuple String Type) Term
   | Ifz Term Term Term
+  | Let String Term Term
+  | Err
 
 derive instance eqTerm :: Eq Term
 
 instance showTerm :: Show Term where
-  show (Lam x y) = showLam x y
+  show (Lam (Tuple x t) y) = showLam x t y
     where
-    showLam x' y'     = "λ" <> show x' <> "." <> showB y'
-    showB (Lam x' y') = showLam x' y'
-    showB expr        = show expr
-
+    showLam x' t' y'             = "λ" <> x' <> ":" <> show t' <> "." <> showB y'
+    showB (Lam (Tuple x' t') y') = showLam x' t' y'
+    showB expr                   = show expr
   show (Var s i) = showVar s i
-
   show (App x y) = showL x <> showR y
     where
     showL (Lam _ _) = "(" <> show x <> ")"
     showL _         = show x
     showR (Var s i) = " " <> showVar s i
-    showR (Nat n)   = " " <> show n
     showR _         = "(" <> show y <> ")"
-
-  show (Nat i)     = show i
-
   show (Ifz x y z) =
     "ifz " <> show x <> " then " <> show y <> " else " <> show z
-
   show (Let x y z) =
-    "let " <> show x <> " = " <> show y <> " in " <> show z
+    "let " <> x <> " = " <> show y <> " in " <> show z
+  show Err         = "*exception*"
 
-showVar :: Name -> Dbi -> String
-showVar (Name s) i = s
-  <> if i == 0 then mempty else "@"
+showVar :: String -> Int -> String
+showVar s i = s
+  <> if i == 0 || (isJust $ fromString s) then mempty else "@"
   <> show i
 
 data PCFLine
   = Blank
-  | TopLet Name Term
+  | TopLet String Term
   | Run Term
 
 derive instance eqPCFLine :: Eq PCFLine
@@ -547,437 +134,231 @@ derive instance eqPCFLine :: Eq PCFLine
 instance showPCFLine :: Show PCFLine where
   show = case _ of
     Blank      -> "Blank"
-    TopLet s t -> "Let " <> show s <> " = " <> show t
+    TopLet s t -> "Let " <> s <> " = " <> show t
     Run t      -> "Run " <> show t
 
 
+--------------------------------------------------------------------------------
+-- Parsing ---------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
--- -----------------------------------------------------------------------------
--- *** Some useful definitions
--- -----------------------------------------------------------------------------
+pcfDef :: LanguageDef
+pcfDef = LanguageDef (unGenLanguageDef haskellStyle)
+          { reservedNames = ["ifz", "then", "else", "let", "in"]
+          , identStart    = alphaNum
+          }
 
--- | Generate a fresh `Name` in a type inference context. An example use case of
--- | this is η expansion, which transforms `f` into `λx. f x`, where `x` is a
--- | new name, i.e. unbounded in the current context.
-fresh :: forall r. Infer r MType
-fresh = do
-  i <- getAt _inferenv
-  putAt _inferenv (i+1)
-  pure $ TVar (Name ("_" <> show i))
-
-
--- | Add a new binding to the environment.
--- |
--- | The FP equivalent would be defining a new value, for example in module
--- | scope or in a `let` block. This corresponds to the "comma" operation used
--- | in formal definition:
--- |
--- |    ```
--- |    Γ, x:σ  ≡  extendGamma Γ (x,σ)
--- |    ```
-extendGamma :: Gamma -> Tuple Name PType -> Gamma
-extendGamma (Gamma env) (Tuple name pt) = Gamma $ M.insert name pt env
-
-
--- -----------------------------------------------------------------------------
--- *** Inferring the types of all language constructs
--- -----------------------------------------------------------------------------
-
-
-infer :: forall r. Gamma -> Term -> Infer r (Tuple Subst MType)
-infer env t = case t of
-  Var name _ -> inferVar env name
-  App f x    -> inferApp env f x
-  Lam x e    -> inferLam env x e
-  Let x e e' -> inferLet env x e e'
-  Ifz z e e' -> inferIfz env z e e'
-  Nat _      -> pure $ Tuple (Subst M.empty) TNat
-
-
--- | Inferring the type of a variable is done via
--- |
--- |    ```
--- |    x:σ ∈ Γ   τ = instantiate(σ)
--- |    ---------------------------- [Var]
--- |              Γ ⊢ x:τ
--- |    ```
--- |
--- | This means that if `Γ` *literally contains* (`∈`) a value, then it also
--- | *entails it* (`⊢`) in all its instantiations.
-inferVar :: forall r. Gamma -> Name -> Infer r (Tuple Subst MType)
-inferVar env name = do
-  sigma <- lookupGamma env name -- x:σ ∈ Γ
-  tau   <- instantiate sigma    -- τ = instantiate(σ)
-                                -- ------------------
-  pure $ Tuple mempty tau       -- Γ ⊢ x:τ
-
-
-lookupGamma :: forall r. Gamma -> Name -> Infer r PType
-lookupGamma (Gamma env) name =
-  case M.lookup name env of
-    Just x  -> pure x
-    Nothing -> throwAt _infererr $ UnknownIdentifier name
-
-
-instantiate :: forall r. PType -> Infer r MType
-instantiate (Forall qs t) = do
-  s <- substituteAllWithFresh qs
-  pure $ applySubst s t
+line :: Parser String PCFLine
+line = between ws eof (option Blank pcf)
   where
-  substituteAllWithFresh xs = do
-    freshes <- replicateA (S.size xs) fresh
-    let freshSubst = M.fromFoldable $ zip (S.toUnfoldable xs) freshes
-    pure $ Subst freshSubst
+  lexer  = makeTokenParser pcfDef
+  ident  = lexer.identifier
+  symbol = lexer.symbol
+  colon  = lexer.colon
+  dot    = lexer.dot
+  ws     = lexer.whiteSpace
+
+  pcf = try (TopLet <$> ident <*> (symbol "=" *> term))
+        <|> (Run <$> term)
+
+  term = dbi M.empty
+     <$> (fix \p -> letx p <|> lam p <|> app p <|> ifz p)
+
+  letx expr = Let
+          <$> (symbol "let" *> ident)
+          <*> (symbol "="   *> expr)
+          <*> (symbol "in"  *> expr)
+
+  lam expr = flip (foldr Lam)
+         <$> between lam0 dot (some vt)
+         <*> expr
+  lam0     = oneOf ['\\', 'λ']
+
+  app expr  = foldl App <$> app0 expr <*> many (app0 expr)
+  app0 expr = (flip Var 0) <$> ident
+          <|> lexer.parens expr
+
+  ifz expr = Ifz
+         <$> (symbol "ifz"  *> expr)
+         <*> (symbol "then" *> expr)
+         <*> (symbol "else" *> expr)
+
+  vt     = Tuple
+       <$> ident
+       <*> option (TV "_") (colon *> typ)
+  typ    = fix \p -> typ0 p `chainr1` (symbol "->" *> pure Fn)
+  typ0 p = (symbol "Nat" *> pure Nat)
+       <|> (TV <$> ident)
+       <|> lexer.parens p
 
 
--- | Function application captures the fact that if we have an function and an
--- | argument we can give to that function, we also have the result value of
--- | the result type available to us.
--- |
--- |    ```
--- |    Γ ⊢ f : fτ   Γ ⊢ x : xτ   fxτ = fresh   unify(fτ, xτ -> fxτ)
--- |    ------------------------------------------------------------ [App]
--- |                          Γ ⊢ f x : fxτ
--- |    ```
--- |
--- | This rule says that given a function and a value with a type, the function
--- | type has to unify with a function type that allow the value type to be its
--- | argument.
-inferApp
-  :: forall r
-   . Gamma
-  -> Term -- ^ __f__ x
-  -> Term -- ^ f __x__
-  -> Infer r (Tuple Subst MType)
-inferApp env f x = do
-  Tuple s1 fTau <- infer env f                              -- f : fτ
-  Tuple s2 xTau <- infer (applySubst s1 env) x              -- x : xτ
-  fxTau <- fresh                                            -- fxτ = fresh
-  s3 <- unify $ Tuple (applySubst s2 fTau) (TFn xTau fxTau) -- unify (fτ, xτ -> fxτ)
-  let s = s3 <> s2 <> s1                                    -- --------------------
-  pure <<< Tuple s $ applySubst s3 fxTau                    -- f x : fxτ
+--------------------------------------------------------------------------------
+-- Type Inference --------------------------------------------------------------
+--------------------------------------------------------------------------------
 
+-- Types of variables
+type Gamma = Array (Tuple String Type)
 
--- | Lambda abstraction is based on the fact that when we introduce a new
--- | variable, the resulting lambda maps from that variable's type to the type
--- | of body.
--- |
--- |    ```
--- |    τ = fresh   σ = ∀∅. τ   Γ, x:σ ⊢ e:τ'
--- |    ------------------------------------- [Lam]
--- |                Γ ⊢ λx.e : τ->τ'
--- |    ```
--- |
--- | Here, `Γ, x:σ` is `Γ` extended by one additional mapping, namely `x:σ`.
--- |
--- | Abstraction is typed by extending the environment by a new 'MType', and if
--- | under this assumption we can construct a function mapping to a value of
--- | that type, we can say that the lambda takes a value and maps to it.
-inferLam
-  :: forall r
-   . Gamma
-  -> Name -- ^ λ__x__. e
-  -> Term -- ^ λx. __e__
-  -> Infer r (Tuple Subst MType)
-inferLam env@(Gamma g) x e = do
-  tau <- case M.lookup x g of                    -- if `x` has type annotation:
-    Just xSigma -> instantiate xSigma            -- τ = instantiate(σ)
-                                                 -- otherwise:
-    Nothing     -> fresh                         -- τ = fresh
-  let sigma = Forall S.empty tau                 -- σ = ∀∅. τ
-      env'  = extendGamma env (Tuple x sigma)    -- Γ, x:σ ...
-  Tuple s tau' <- infer env' e                   --        ... ⊢ e:τ'
-                                                 -- -----------------
-  pure <<< Tuple s $ TFn (applySubst s tau) tau' -- λx.e : τ->τ'
+-- Type constraints
+type TyCs = { ty :: Type, cs :: Array (Tuple Type Type), ix :: Int }
 
+-- Type instantiations
+type TyIs = { ty :: Type, ins :: Gamma, ix :: Int }
 
+gather :: Gamma -> Int -> Term -> TyCs
+gather gamma i term = case term of
+  Var "undefined" _ -> { ty: TV $ "_" <> show i, cs: [], ix: i + 1 }
+  Var "fix" _ -> { ty: Fn (Fn a a) a, cs: [], ix: i + 1 }
+    where a = TV $ "_" <> show i
+  Var "pred" _ -> { ty: Fn Nat Nat, cs: [], ix: i }
+  Var "succ" _ -> { ty: Fn Nat Nat, cs: [], ix: i }
+  Var s _
+    | Just _ <- fromString s -> { ty: Nat, cs: [], ix: i }
+    | Just t <- lookup s gamma ->
+      let { ty: t', ins: _, ix: j } = instantiate t i in { ty: t', cs: [], ix: j }
+    | otherwise -> { ty: TV "_", cs: [Tuple (GV $ "undefined: " <> s) (GV "?")], ix: i }
+  Lam (Tuple s (TV "_")) u -> { ty: Fn x tu, cs: cs, ix: j }
+    where
+    x = TV $ "_" <> show i
+    { ty: tu, cs, ix: j } = gather (Tuple s x : gamma) (i + 1) u
+  Lam (Tuple s t) u -> { ty: Fn t tu, cs, ix: j }
+    where
+    { ty: tu, cs, ix: j } = gather (Tuple s t : gamma) i u
+  App t u -> { ty: x, cs: [Tuple tt (Fn tu x)] `union` cs1 `union` cs2, ix: k + 1 }
+    where
+    { ty: tt, cs: cs1, ix: j } = gather gamma i t
+    { ty: tu, cs: cs2, ix: k } = gather gamma j u
+    x = TV $ "_" <> show k
+  Ifz s t u -> { ty: tt
+               , cs: foldl union [Tuple ts Nat, Tuple tt tu] [cs1, cs2, cs3]
+               , ix: l
+               }
+    where
+    { ty: ts, cs: cs1, ix: j } = gather gamma i s
+    { ty: tt, cs: cs2, ix: k } = gather gamma j t
+    { ty: tu, cs: cs3, ix: l } = gather gamma k u
+  Let s t u -> { ty: tu, cs: cs1 `union` cs2, ix: k }
+    where
+    { ty: tt, cs: cs1, ix: j } = gather gamma i t
+    gen = generalize (foldMap (freeTV <<< snd) gamma) tt
+    { ty: tu, cs: cs2, ix: k } = gather (Tuple s gen : gamma) j u
+  Err -> { ty: TV "_", cs: [Tuple (GV "error") (GV "?")], ix: i }
 
--- | A let binding allows extending the environment with new bindings in a
--- | principled manner. To do this, we first have to typecheck the expression to
--- | be introduced. The result of this is then generalized to a 'PType', since
--- | let bindings introduce new polymorphic values, which are then added to the
--- | environment. Now we can finally typecheck the body of the "in" part of the
--- | let binding.
--- |
--- | Note that in our simple language, let is non-recursive, but recursion can
--- | be introduced as usual by adding a primitive `fix : (a -> a) -> a` if
--- | desired.
--- |
--- |    ```
--- |    Γ ⊢ e:τ   σ = gen(Γ,τ)   Γ, x:σ ⊢ e':τ'
--- |    --------------------------------------- [Let]
--- |             Γ ⊢ let x = e in e' : τ'
--- |    ```
-inferLet
-  :: forall r
-   . Gamma
-  -> Name -- ^ let __x__ = e in e'
-  -> Term -- ^ let x = __e__ in e'
-  -> Term -- ^ let x = e in __e'__
-  -> Infer r (Tuple Subst MType)
-inferLet env x e e' = do
-  Tuple s1 tau <- infer env e                  -- Γ ⊢ e:τ
-  let env'  = applySubst s1 env
-      sigma = generalize env' tau              -- σ = gen(Γ,τ)
-      env'' = extendGamma env' $ Tuple x sigma -- Γ, x:σ
-  Tuple s2 tau' <- infer env'' e'              -- Γ ⊢ ...
-                                               -- ----------------------------
-  pure $ Tuple (s2 <> s1) tau'                 --     ... let x = e in e' : τ'
-
-
-
-inferIfz
-  :: forall r
-   . Gamma
-   -> Term -- ^ ifz __z__ then e else e'
-   -> Term -- ^ ifz z then __e__ else e'
-   -> Term -- ^ ifz z then e else __e'__
-   -> Infer r (Tuple Subst MType)
-inferIfz env zero e e' = do
-  Tuple s1 t1 <- infer env zero                -- Γ ⊢ z:t1
-  Tuple s2 t2 <- infer env e                   -- Γ ⊢ e:t2
-  Tuple s3 t3 <- infer env e'                  -- Γ ⊢ e':t3
-  s4 <- unify $ Tuple t1 TNat                  -- unify (t1, TNat)
-  s5 <- unify $ Tuple t2 t3                    -- unify (t2, t3)
-                                               -- -----------------------
-  pure $ Tuple (s1 <> s2 <> s3 <> s4 <> s5) t2 -- if z then e else e': t2
-
-
-generalize :: Gamma -> MType -> PType
-generalize env mt = Forall qs mt
+-- | Generates fresh type variables for generalized type variables.
+instantiate :: Type -> Int -> TyIs
+instantiate = go []
   where
-  qs = freeMType mt `S.difference` freeGamma env
+  go m ty i = case ty of
+    GV s | Just t <- lookup s m -> { ty: t, ins: m, ix: i }
+         | otherwise            -> { ty: x, ins: Tuple s x : m, ix: i + 1 }
+           where x = TV $ "_" <> show i
+    Fn t u -> { ty: Fn t' u', ins: m'', ix: i'' }
+      where
+      { ty: t', ins: m', ix: i' } = go m t i
+      { ty: u', ins: m'', ix: i'' } = go m' u i'
+    _ -> { ty: ty, ins: m, ix: i }
 
+generalize :: Set String -> Type -> Type
+generalize fvs ty = case ty of
+  TV s | not $ member s fvs -> GV s
+  Fn s t                    -> Fn (generalize fvs s) (generalize fvs t)
+  _                         -> ty
 
+freeTV :: Type -> Set String
+freeTV = case _ of
+  Fn a b -> freeTV a <> freeTV b
+  TV tv  -> S.singleton tv
+  _      -> S.empty
 
+unify :: Array (Tuple Type Type) -> Either String Gamma
+unify tys = case uncons tys of
+  Nothing -> Right []
+  Just { head: Tuple (GV s) (GV "?"), tail: _ } -> Left s
+  Just { head: Tuple s t, tail } | s == t       -> unify tail
+  Just { head: Tuple (TV x) t, tail }
+    | x `member` freeTV t ->
+      Left $ "infinite: " <> x <> " = " <> show t
+    | otherwise ->
+      (Tuple x t : _) <$> unify (join (***) (substTy $ Tuple x t) <$> tail)
+  Just { head: Tuple s (TV y), tail } ->
+    unify $ Tuple (TV y) s : tail
+  Just { head: Tuple (Fn s1 s2) (Fn t1 t2), tail } ->
+    unify $ Tuple s1 t1 : Tuple s2 t2 : tail
+  Just { head: Tuple s t, tail: _ } ->
+    Left $ "mismatch: " <> show s <> " /= " <> show t
 
--- #############################################################################
--- #############################################################################
--- * Parsing
--- #############################################################################
--- #############################################################################
+substTy :: Tuple String Type -> Type -> Type
+substTy p@(Tuple x t) ty = case ty of
+  Fn a b        -> Fn (substTy p a) (substTy p b)
+  TV y | y == x -> t
+  _             -> ty
 
-
-line :: ParserT String (Writer Gamma) PCFLine
-line = between ws eof <<<
-  option Blank $
-  try (TopLet <$> var <*> (str "=" *> term))
-  <|> (Run <$> term)
-
-
-term :: ParserT String (Writer Gamma) Term
-term = dbi M.empty <$> term'
+-- | Applies all the substitutions found during unify to the type expression
+-- | returned by gather to compute the principal type of a given closed term
+-- | in a given context.
+typeOf :: Gamma -> Term -> Either String Type
+typeOf gamma term = foldl (flip substTy) ty <$> unify cs
   where
-  term'  = fix $ \p -> lam p <|> app p <|> letx p <|> ifz p <|> nat
-
-  lam p  = flip (foldr Lam)
-       <$> between lam0 lam1 (some vt)
-       <*> p
-  lam0   = str "\\" <|> str "λ"
-  lam1   = str "."
-
-  -- | Possible type annotations.
-  -- |
-  -- | This is a pretty interesting design choice. In our little language, a
-  -- | name in lambda abstraction can be annotated with type, e.g.
-  -- |
-  -- |    \x:Nat.x
-  -- |
-  -- | or
-  -- |
-  -- |    \x:I->I.x
-  -- |
-  -- | Conceptually, there are informations at two different levels here: the
-  -- | lambda itself (`\x.x`) is value level information, whereas the type
-  -- | annotation is type level. To represent them after being parsed, one
-  -- | simple way is to design the data structure to hold both of them:
-  -- |
-  -- |    data Term = Lam (Tuple Name (Maybe MType)) Term
-  -- |
-  -- | which makes the parsing relatively easier, but the whole program arguably
-  -- | messier. For example, the type inference process needs to pull these type
-  -- | annotations out of `Term` structure, while the evaluation process may not
-  -- | care about them at all.
-  -- |
-  -- | An (cleaner) alternative would be to separate the type data structure and
-  -- | value data structure, but how to parse the source text to produce them in
-  -- | one go? The choice here is:
-  -- |
-  -- |    ParserT s (Writer a) b
-  -- |
-  -- | The main parser returns the `Term` structure. When it encounters type
-  -- | annotations, it parses and accumulates them in the `Writer` monad.
-  tyAnn  = fix $ \p ->
-           ((str "Nat" *> pure TNat)
-       <|> (TVar <$> var)
-       <|> (between (str "(") (str ")") p))
-           `chainr1` (str "->" *> pure TFn)
-  vt     = do
-    v <- var
-    optionMaybe (str ":" *> tyAnn) >>= case _ of
-      Just mt -> do
-        let sigma = Forall (freeMType mt) mt
-        lift $ tell (Gamma $ M.singleton v sigma)
-      Nothing -> pure unit
-    pure v
-
-  app p  = foldl App <$> app0 p <*> many (app0 p)
-  app0 p = nat
-       <|> flip Var 0 <$> var
-       <|> between (str "(") (str ")") p
-
-  letx p = Let
-       <$> (str "let" *> var)
-       <*> (str "="   *> p)
-       <*> (str "in"  *> p)
-
-  ifz p  = Ifz
-       <$> (str "ifz"  *> p)
-       <*> (str "then" *> p)
-       <*> (str "else" *> p)
-
-  nat = try $ do
-    n <- fromString <<< fromCharArray <$> some digit
-    case n of
-      Just n' -> do
-        ws
-        pure $ Nat n'
-      Nothing -> fail "not a number"
+  { ty, cs, ix: _ } = gather gamma 0 term
 
 
-str :: forall m. Monad m => String -> ParserT String m Unit
-str = (_ *> ws) <<< string
+--------------------------------------------------------------------------------
+-- Evaluation ------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
+type Lets = Map String Term
 
-var :: forall m. Monad m => ParserT String m Name
-var = try $ do
-  s <- fromCharArray <$> some alphaNum
-  when (s `elem` words "ifz then else let in") $ fail "unexpected keyword"
-  ws
-  pure $ Name s
-
-
-ws :: forall m. Monad m => ParserT String m Unit
-ws  = whiteSpace *> optional (try $ string "--" *> many anyChar)
-
-
--- | De Bruijn Indices
-type DebruijnIx = Map Name Dbi
-
-
--- | Assign De Bruijn indices to `Var` terms, eliminating the need of
--- | renaming them.
-dbi :: DebruijnIx -> Term -> Term
-dbi ix t = case t of
-  Var s _   -> Var s <<< fromMaybe 0 $ M.lookup s ix
-  Lam s m   -> Lam s $ dbi (ix' s) m
-  App m n   -> App (dbi ix m) (dbi ix n)
-  i@(Nat _) -> i
-  Let s m n -> Let s (dbi ix m) $ dbi (ix' s) n
-  Ifz m n o -> Ifz (dbi ix m) (dbi ix n) (dbi ix o)
-  where
-  -- The `Lam` and `Let` terms are binders, so increase every known `Var`s
-  -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
-  -- it starts fresh.
-  ix' s = M.insert s 0 $ map (_ + 1) ix
-
-
-
-
--- #############################################################################
--- #############################################################################
--- * Evaluation
--- #############################################################################
--- #############################################################################
-
-
--- #############################################################################
--- ** Evaluation context
--- #############################################################################
-type Eval r a = Run (evalerr :: EXCEPT EvalError, evalenv :: STATE (Map Name Term) | r) a
-
-_evalerr = SProxy :: SProxy "evalerr"
-_evalenv = SProxy :: SProxy "evalenv"
-
-
--- | Errors that can happen during evaluation process.
-data EvalError
-  = ZeroHasNoPred
-  | Undefined
-
-
-instance showEvalError :: Show EvalError where
-  show = case _ of
-    ZeroHasNoPred -> "ZeroHasNoPred"
-    Undefined     -> "Undefined"
-
-
--- | Evaluate a value in an evaluation context.
-runEval
-  :: forall r a
-   . Eval r a
-  -> Run r (Either EvalError a)
-runEval = evalStateAt _evalenv M.empty <<< runExceptAt _evalerr
-
-
--- The interesting thing is, once we are certain a closed term is well-types,
+-- The interesting this is, once we are certain a closed term is well-types,
 -- we can ignore the types and evaluate as we would in untyped lambda calculus.
-eval :: forall r. Term -> Eval r Term
-eval t = do
-  env <- getAt _evalenv
-  case t of
-    Var s _ | Just t' <- M.lookup s env -> eval t'
-            | s == Name "undefined"     -> throwAt _evalerr Undefined
+eval :: Lets -> Term -> Term
+eval env term = case term of
+  Var "undefined" _ -> Err
+  Ifz m n o -> case eval env m of
+    Err -> Err
+    Var s _ -> case fromString s of
+      Just 0 -> eval env n
+      Just _ -> eval env o
+      _      -> term
+    _ -> term
+  Let s m n -> eval env $ beta n s m
+  App m n -> let m' = eval env m in case m' of
+    Err -> Err
+    Lam (Tuple v _) f -> eval env $ beta f v n
+    Var "pred" _ -> case eval env n of
+      Err -> Err
+      v@(Var s ix) -> case fromString s of
+        Just 0 -> Err
+        Just i -> Var (show $ i - 1) ix
+        _      -> App m' v
+      t -> App m' t
+    Var "succ" _ -> case eval env n of
+      Err -> Err
+      v@(Var s ix) -> case fromString s of
+        Just i -> Var (show $ i + 1) ix
+        _      -> App m' v
+      t -> App m' t
+    Var "fix" _ -> eval env (App n (App m' n))
+    _ -> App m' n
+  Var s _ | Just t <- M.lookup s env -> eval env t
+  _ -> term
 
-    App e e' -> do
-      e'' <- eval e
-      case e'' of
-        Lam x f -> eval $ beta f x e'
-        Var (Name "pred") _ -> do
-          nat <- eval e'
-          case nat of
-            Nat 0 -> throwAt _evalerr ZeroHasNoPred
-            Nat i -> pure $ Nat (i - 1)
-            t'    -> pure $ App e'' t'
-        Var (Name "succ") _ -> do
-          nat <- eval e'
-          case nat of
-            Nat i -> pure $ Nat (i + 1)
-            t'    -> pure $ App e'' t'
-        Var (Name "fix") _ -> eval $ App e' (App e'' e')
-        _ -> pure $ App e'' e'
-
-    Let x e e' -> eval $ beta e' x e
-
-    Ifz x e e' -> do
-      nat <- eval x
-      case nat of
-        Nat 0   -> eval e
-        Nat _   -> eval e'
-        _       -> pure t
-
-    _ -> pure t
-
-
-norm :: forall r. Term -> Eval r Term
-norm t = do
-  t' <- eval t
-  case t' of
-    v@(Var _ _) -> pure v
-    Lam x f     -> Lam x <$> norm f
-    App e e'    -> App   <$> norm e <*> norm e'
-    Let x e e'  -> Let x <$> norm e <*> norm e'
-    Ifz x e e'  -> Ifz   <$> norm x <*> norm e <*> norm e'
-    n@(Nat _)   -> pure n
-
+norm :: Lets -> Term -> Term
+norm env term = case eval env term of
+  Err         -> Err
+  v@(Var _ _) -> v
+  Lam vt m    -> Lam vt (rec m)
+  App m n     -> App (rec m) (rec n)
+  Ifz m n o   -> Ifz (rec m) (rec n) (rec o)
+  Let s m n   -> Err
+  where
+  rec = norm env
 
 -- Beta reduction under De Bruijn Index:
 --
 --    (λ. t) u ~> ↑(-1,0)(t[0 := ↑(1,0)u])
 --
-beta :: Term -> Name -> Term -> Term
+beta :: Term -> String -> Term -> Term
 beta t v u = shift (-1) 0 <<< subst t v 0 $ shift 1 0 u
-
 
 -- De Bruijn Substitution: The substitution of a term `s` for variable number
 -- `j` in a term `t`, written `t[j := s]`, is defined as follows:
@@ -987,19 +368,18 @@ beta t v u = shift (-1) 0 <<< subst t v 0 $ shift 1 0 u
 --    (λ. t)[j := s]  =  λ. t[j+1 := ↑(1,0)s]
 --    (t u)[j := s]   =  (t[j := s]  u[j := s])
 --
-subst :: Term -> Name -> Dbi -> Term -> Term
+subst :: Term -> String -> Int -> Term -> Term
 subst t v j s = case t of
   Var x k | x == v && k == j -> s
           | otherwise        -> t
-  Lam x m | x == v    -> t
-          | otherwise -> Lam x (subst m v (j+1) (shift 1 0 s))
+  Lam x@(Tuple y _) m | y == v    -> t
+                      | otherwise -> Lam x (subst m v (j+1) (shift 1 0 s))
   App m n   -> App (rec m) (rec n)
-  Let y m n -> Let y (rec m) (rec n)
   Ifz m n o -> Ifz (rec m) (rec n) (rec o)
-  n@(Nat _) -> n
+  Let y m n -> Let y (rec m) (rec n)
+  Err       -> Err
   where
   rec t' = subst t' v j s
-
 
 -- De Bruijn Shifting: The `d`-place shift of a term t above cutoff `c`, written
 -- `↑(d,c)t`, is defined as follows:
@@ -1017,110 +397,62 @@ subst t v j s = case t of
 --
 shift :: Int -> Int -> Term -> Term
 shift d c t = case t of
-  Var s k
-    | k < c     -> Var s k
-    | otherwise -> Var s (k+d)
-  Lam s t'      -> Lam s $ shift d (c+1) t'
-  App m n       -> App (rec m) (rec n)
-  Let s m n     -> Let s (rec m) (shift d (c+1) n)
-  Ifz m n o     -> Ifz (rec m) (rec n) (rec o)
-  n@(Nat _)     -> n
+  Var s k | k < c     -> Var s k
+          | otherwise -> Var s (k+d)
+  Lam s t'            -> Lam s $ shift d (c+1) t'
+  App m n             -> App (rec m) (rec n)
+  Ifz m n o           -> Ifz (rec m) (rec n) (rec o)
+  Let s m n           -> Let s (rec m) (shift d (c+1) n)
+  Err                 -> Err
   where
   rec = shift d c
 
+-- De Bruijn Index
+type DebruijnIndex = Map String Int
 
-
-
--- #############################################################################
--- #############################################################################
--- * REPL
--- #############################################################################
--- #############################################################################
-
-
--- | The read-evaluation-print-loop.
--- |
--- | This is where every piece of machinery we build so far comes together. Most
--- | importantly, all states finally get interpreted,
--- |
--- |    - the fresh type variable names supply in type inference context
--- |    - the types of names known so far
--- |    - the top-level let bindings seen so far
--- |
--- | They all are handled with different "granularity":
--- |
--- |    - at first glance, the type variable names are totally internal to the
--- |      inference functions, why would the REPL care? Well, it is sort of
--- |      visible when printing out types. If being left alone, those numbered
--- |      type variable names would just keep growing for the whole REPL
--- |      session, which is not very desirable. For that reason, `runInfer` is
--- |      run at the line level, so that each input line gets its type variables
--- |      starting from zero.
--- |
--- |    - the top-level let bindings. They are truly internal to the evaluation
--- |      functions. The REPL users can't interact with them.
--- |
--- |    - the type environment, gamma. Its main concern is how the exceptions
--- |      are handled. The first draft caught both inference and evaluation
--- |      exception at the very top of REPL loop, and then started a brand new
--- |      loop. We lost the gamma. It has since been changed. Now the prelude,
--- |      the initial gamma, is fed to the REPL at the very top and both
--- |      exception are handled on the lower levels. If either exceptions is
--- |      thrown, it won't wipe out the current gamma.
--- |
--- |    - The gamma again. Many type inference functions take an explicit gamma
--- |      argument instead of getting it from inference context. It has its pros
--- |      and cons. The main down side is being too explicit, an extra argument
--- |      after all. It is only part of the state effects at the REPL level.
--- |      However, every input line may contains type annotation, which should
--- |      be used to extend the current gamma, but only for the current line.
--- |      The subsequent lines don't care. In fact, if the type annotations are
--- |      made persistent, they interfere with the subsequent type inference. If
--- |      the gamma were part of the state of inference context, the REPL then
--- |      have to extend it after seeing type annotation and restore it to
--- |      previous gamma after a line is type-inferred and evaluated. Since the
--- |      gamma argument is explicit, the REPL can simply retrieve it from its
--- |      own state, extends it, call type inference with extended version and
--- |      be done with it.
-repl
-  :: forall r
-   . Run (console :: CONSOLE, readline :: READLINE | r) (Either EvalError Unit)
-repl = evalState prelude repl'
+-- Assign De Bruijn indices to `Var` terms, eliminating the need of renaming them.
+dbi :: DebruijnIndex -> Term -> Term
+dbi ix term = case term of
+  Var s _             -> Var s <<< fromMaybe 0 $ M.lookup s ix
+  Lam v@(Tuple s _) m -> Lam v $ dbi (ix' s) m
+  App m n             -> App (dbi ix m) (dbi ix n)
+  Ifz m n o           -> Ifz (dbi ix m) (dbi ix n) (dbi ix o)
+  Let s m n           -> Let s (dbi ix m) $ dbi (ix' s) n
+  Err                 -> Err
   where
-  repl' = runEval go >>= case _ of
-    Left err -> do
-      error $ "eval error: " <> show err
-      repl'
-    res -> pure res
+  -- The `Lam` and `Let` terms are binders, so increase every known `Var`s
+  -- De Bruijn Index. Also overwrite the `Var` with the same name as `s`;
+  -- it starts fresh.
+  ix' s = M.insert s 0 $ map (_ + 1) ix
 
-  go = do
+
+-- REPL
+type Env = Tuple Gamma Lets
+
+repl :: forall r. Run (readline :: READLINE , console :: CONSOLE | r) (Tuple Env Unit)
+repl = runState (Tuple [] M.empty) repl'
+  where
+  repl' = do
     setPrompt "λ> "
     input <- prompt
     when (input /= "\\d") do
-      let Tuple exp ann = runWriter $ runParserT input line
-      gamma <- get
-      let annotatedGamma = over2 Gamma M.union ann gamma
-      case exp of
+      case runParser input line of
         Left err ->
           error $ "parse error: " <> show err
-
         Right Blank -> pure unit
-
-        Right (Run lambda) ->
-          inferTyAndActOn annotatedGamma lambda \_ ->
-            norm lambda >>= logShow
-
-        Right (TopLet name lambda) ->
-          inferTyAndActOn annotatedGamma lambda \ty -> do
-            log $ "[" <> show name <> " : " <> show ty <> "]"
-            modify $ over Gamma (M.insert name ty)
-            modifyAt _evalenv $ M.insert name lambda
-      go
-
-  inferTyAndActOn gamma exp action =
-    exp # infer gamma
-        # map (generalize gamma <<< uncurry applySubst)
-        # runInfer
-    >>= case _ of
-      Left err -> error $ "infer error: " <> show err
-      Right ty -> action ty
+        Right (Run term) -> do
+          Tuple gamma lets <- get
+          case typeOf gamma term of
+            Left msg -> error $ "bad type: " <> msg
+            Right t -> do
+              logShow $ norm lets term
+        Right (TopLet s term) -> do
+          Tuple gamma lets <- get
+          case typeOf gamma term of
+            Left msg -> error $ "bad type: " <> msg
+            Right t -> do
+              log $ "[" <> s <> " : " <> show t <> "]"
+              let gamma' = Tuple s (generalize S.empty t) : gamma
+              let lets' = M.insert s term lets
+              modify $ const (Tuple gamma' lets')
+      repl'
