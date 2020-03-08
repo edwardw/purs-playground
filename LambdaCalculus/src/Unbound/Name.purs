@@ -1,6 +1,7 @@
 module Unbound.Name where
 
 import Prelude
+import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, class Typeable1, TypeRep, mkTyRep, typeOf)
 import Data.Typelevel.Undefined (undefined)
 import Type.Proxy (Proxy(..))
@@ -32,8 +33,8 @@ instance typeable1Name :: Typeable1 Name where
   typeOf1 _ = mkTyRep "Unbound" "Name"
 
 
-isFreename :: forall a. Name a -> Boolean
-isFreename = case _ of
+isFreeName :: forall a. Name a -> Boolean
+isFreeName = case _ of
   Fn _ _ -> true
   Bn _ _ -> false
 
@@ -74,17 +75,23 @@ newtype Exists f = Exists { runExists :: forall r. (forall a. Typeable a => f a 
 mkExists :: forall f a. Typeable1 f => Typeable a => f a -> Exists f
 mkExists x = Exists { runExists: \f -> f x }
 
+mkAnyName :: forall a. Typeable a => Name a -> AnyName
+mkAnyName nm = AnyName $ mkExists nm
+
 instance eqAnyName :: Eq AnyName where
   eq (AnyName (Exists a)) (AnyName (Exists b)) = a' == b'
     where
-    a' = a.runExists repr
-    b' = b.runExists repr
+    a' = a.runExists repInt
+    b' = b.runExists repInt
 
 instance ordAnyName :: Ord AnyName where
   compare (AnyName (Exists a)) (AnyName (Exists b)) = compare a' b'
     where
-    a' = a.runExists repr
-    b' = b.runExists repr
+    a' = a.runExists repInt
+    b' = b.runExists repInt
 
-repr :: forall a. Typeable a => Name a -> { t :: TypeRep, v :: Name Int }
-repr x = { t: typeOf (Proxy :: Proxy (Name a)), v: unsafeCoerce x }
+repInt :: forall a. Typeable a => Name a -> Tuple TypeRep (Name Int)
+repInt x = Tuple (typeOf (Proxy :: Proxy (Name a))) (unsafeCoerce x)
+
+repAs :: forall a b. Typeable a => Typeable b => Name a -> Name b -> Tuple TypeRep (Name a)
+repAs target x = Tuple (typeOf (Proxy :: Proxy (Name b))) (unsafeCoerce x)
