@@ -64,7 +64,7 @@ name2String = case _ of
 
 
 -- | An `AnyName` is a name that stands for a term of some type.
-data AnyName = AnyName (Tuple TypeRep (Name Int))
+newtype AnyName = AnyName (Tuple TypeRep (Name Int))
 
 mkAnyName :: forall a. Typeable a => Name a -> AnyName
 mkAnyName nm = AnyName $ Tuple (typeOf (Proxy :: Proxy (Name a)))
