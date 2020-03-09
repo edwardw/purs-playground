@@ -1,24 +1,24 @@
 module Unbound.Alpha where
 
 import Prelude
-import Data.Either
-import Data.Foldable
-import Data.Functor.Contravariant
-import Data.Generic.Rep
-import Data.Maybe
-import Data.Monoid.Conj
-import Data.Profunctor.Strong
+import Data.Either (Either(..))
+import Data.Functor.Contravariant (class Contravariant, cmap)
+import Data.Generic.Rep (Constructor(..), NoArguments(..), NoConstructors, Product(..), Sum(..))
+import Data.Maybe (Maybe(..))
+import Data.Monoid.Conj (Conj)
+import Data.Profunctor.Strong (first)
 import Data.Set (Set)
 import Data.Set as S
-import Data.Tuple
-import Data.Typeable
+import Data.Tuple (Tuple(..))
+import Data.Typeable (class Typeable, typeOf)
 import Data.Typelevel.Undefined (undefined)
-import Type.Proxy
-import Unbound.Fresh
-import Unbound.LFresh
-import Unbound.Name
-import Unbound.PermM
+import Type.Proxy (Proxy(..))
+import Unbound.Fresh (class Fresh, fresh)
+import Unbound.LFresh (class LFresh, avoid, lfresh)
+import Unbound.Name (AnyName(..), Name(..), isFreeName, mkAnyName)
+import Unbound.PermM (Perm, single)
 import Unbound.PermM as PermM
+import Unsafe.Coerce (unsafeCoerce)
 
 
 data AlphaCtx = AlphaCtx { mode :: Mode, level :: Int }
@@ -430,11 +430,10 @@ instance alphaName :: Typeable a => Alpha (Name a) where
       if ctx.mode == Term && ctx.level == l
       then
         case b.runNthPatFind k of
-          Right (AnyName (Exists nm)) ->
-            let Tuple t v = nm.runExists (repAs a)
-            in if t == typeOf (Proxy :: Proxy a)
-               then v
-               else undefined
+          Right (AnyName (Tuple t v)) ->
+            if t == typeOf (Proxy :: Proxy a)
+            then unsafeCoerce v
+            else undefined
           Left _ -> undefined
       else a
     _ -> a
@@ -461,20 +460,18 @@ instance alphaName :: Typeable a => Alpha (Name a) where
   nthPatFind nm = NthPatFind { runNthPatFind: \i ->
     if i == 0 then Right (mkAnyName nm) else Left $ i - 1 }
 
-  namePatFind nm1 = NamePatFind { runNamePatFind: \(AnyName (Exists nm2)) ->
-    let typ1 = typeOf (Proxy :: Proxy (Name a))
-        Tuple t v = nm2.runExists (repAs nm1)
-    in if typ1 == t && nm1 == v then Right 0 else Left 1 }
+  namePatFind nm1 = NamePatFind { runNamePatFind: \(AnyName (Tuple t v)) ->
+    let t1 = typeOf (Proxy :: Proxy (Name a))
+    in if t1 == t && nm1 == (unsafeCoerce v) then Right 0 else Left 1 }
 
   swaps' ctx perm nm =
     if isTermCtx ctx
     then
       case PermM.apply perm (mkAnyName nm) of
-        AnyName (Exists nm') ->
-          let Tuple t v = nm'.runExists (repAs nm)
-          in if t == typeOf (Proxy :: Proxy (Name a))
-             then v
-             else undefined
+        AnyName (Tuple t v) ->
+          if t == typeOf (Proxy :: Proxy (Name a))
+          then unsafeCoerce v
+          else undefined
     else nm
 
   freshen' ctx nm =
@@ -509,15 +506,15 @@ instance alphaAnyName :: Alpha AnyName where
       -- in a term, unequal variables are unequal, in a pattern it's ok.
       not (isTermCtx ctx)
 
-  fvAny' ctx nfn n@(AnyName (Exists nm)) =
-    if isTermCtx ctx && nm.runExists isFreeName
+  fvAny' ctx nfn n@(AnyName (Tuple _ v)) =
+    if isTermCtx ctx && isFreeName v
     then nfn n
     else pure n
 
   isTerm _ = mempty
 
-  isPat n@(AnyName (Exists nm)) =
-    if nm.runExists isFreeName
+  isPat n@(AnyName (Tuple _ v)) =
+    if isFreeName v
     then Just $ S.singleton n
     else Nothing
 
@@ -526,25 +523,29 @@ instance alphaAnyName :: Alpha AnyName where
     then PermM.apply perm n
     else n
 
-  freshen' ctx n@(AnyName (Exists nm)) =
+  freshen' ctx nm@(AnyName (Tuple t v)) =
     if isTermCtx ctx
     then undefined
     else do
-      nm' <- nm.runExists fresh
-      pure $ Tuple (mkAnyName nm') (single n (mkAnyName nm'))
+      v' <- fresh v
+      let nm' = AnyName $ Tuple t v'
+      pure $ Tuple nm' (single nm nm')
 
-  lfreshen' ctx n@(AnyName (Exists nm)) cont =
+  lfreshen' ctx nm@(AnyName (Tuple t v)) cont = undefined
     if isTermCtx ctx
     then undefined
     else do
-      nm' <- nm.runExists lfresh
-      avoid [mkAnyName nm'] <<< cont (mkAnyName nm') $ single n (mkAnyName nm')
+      v' <- lfresh v
+      let nm' = AnyName $ Tuple t v'
+      avoid [nm'] <<< cont nm' $ single nm nm'
 
-  open ctx b (AnyName (Exists nm)) =
-    mkAnyName (nm.runExists (open ctx b))
+  open ctx b (AnyName (Tuple t v)) =
+    let v' = open ctx b v
+    in  AnyName $ Tuple t v'
 
-  close ctx b (AnyName (Exists nm)) =
-    mkAnyName (nm.runExists (close ctx b))
+  close ctx b (AnyName (Tuple t v)) =
+    let v' = close ctx b v
+    in  AnyName $ Tuple t v'
 
   nthPatFind nm = NthPatFind { runNthPatFind: \i ->
     if i == 0 then Right nm else Left $ i - 1 }
@@ -554,11 +555,9 @@ instance alphaAnyName :: Alpha AnyName where
 
   isEmbed _ = false
 
-  acompare' ctx (AnyName (Exists nm1)) (AnyName (Exists nm2))
+  acompare' ctx (AnyName (Tuple t1 v1)) (AnyName (Tuple t2 v2))
     | isTermCtx ctx =
-      let Tuple t1 v1 = nm1.runExists repInt
-          Tuple t2 v2 = nm2.runExists repInt
-      in  case compare t1 t2 of
-            EQ  -> acompare' ctx v1 v2
-            ord -> ord
+      case compare t1 t2 of
+        EQ  -> acompare' ctx v1 v2
+        ord -> ord
     | otherwise = EQ

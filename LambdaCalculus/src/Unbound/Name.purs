@@ -63,35 +63,18 @@ name2String = case _ of
   Bn _ _ -> undefined
 
 
--- | An `AnyName` is a name that stands for a term of some (existentially
--- | hidden) type.
-data AnyName = AnyName (Exists Name)
-
--- | Existential quantification using the universal one.
--- |
--- | By Oleg Grenrus in "More GADTs in PureScript"
-newtype Exists f = Exists { runExists :: forall r. (forall a. Typeable a => f a -> r) -> r }
-
-mkExists :: forall f a. Typeable1 f => Typeable a => f a -> Exists f
-mkExists x = Exists { runExists: \f -> f x }
+-- | An `AnyName` is a name that stands for a term of some type.
+data AnyName = AnyName (Tuple TypeRep (Name Int))
 
 mkAnyName :: forall a. Typeable a => Name a -> AnyName
-mkAnyName nm = AnyName $ mkExists nm
+mkAnyName nm = AnyName $ Tuple (typeOf (Proxy :: Proxy (Name a)))
+                               (unsafeCoerce nm)
 
 instance eqAnyName :: Eq AnyName where
-  eq (AnyName (Exists a)) (AnyName (Exists b)) = a' == b'
-    where
-    a' = a.runExists repInt
-    b' = b.runExists repInt
+  eq (AnyName (Tuple t1 v1)) (AnyName (Tuple t2 v2)) = t1 == t2 && v1 == v2
 
 instance ordAnyName :: Ord AnyName where
-  compare (AnyName (Exists a)) (AnyName (Exists b)) = compare a' b'
-    where
-    a' = a.runExists repInt
-    b' = b.runExists repInt
+  compare (AnyName nm1) (AnyName nm2) = compare nm1 nm2
 
-repInt :: forall a. Typeable a => Name a -> Tuple TypeRep (Name Int)
-repInt x = Tuple (typeOf (Proxy :: Proxy (Name a))) (unsafeCoerce x)
-
-repAs :: forall a b. Typeable a => Typeable b => Name a -> Name b -> Tuple TypeRep (Name a)
-repAs target x = Tuple (typeOf (Proxy :: Proxy (Name b))) (unsafeCoerce x)
+instance showAnyName :: Show AnyName where
+  show (AnyName (Tuple _ v)) = show v

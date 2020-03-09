@@ -9,7 +9,7 @@ import Data.Set (Set)
 import Data.Set as S
 import Data.Typeable (class Typeable)
 import Data.Typelevel.Undefined (undefined)
-import Unbound.Name (AnyName(..), Name, makeName, mkExists, name2String)
+import Unbound.Name (AnyName, Name, makeName, mkAnyName, name2String)
 
 
 class Monad m <= LFresh m where
@@ -52,7 +52,7 @@ instance lfreshLFreshMT :: Monad m => LFresh (LFreshMT m) where
   lfresh name = LFreshMT do
     let s = name2String name
     used <- ask
-    case ZL.head $ ZL.filter (\nm -> not (S.member (AnyName (mkExists nm)) used))
+    case ZL.head $ ZL.filter (\nm -> not (S.member (mkAnyName nm) used))
                              (map (makeName s) nat) of
       Just nm -> pure nm
       Nothing -> undefined -- unreachable
