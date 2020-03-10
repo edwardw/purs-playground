@@ -60,8 +60,9 @@ isZeroLevelCtx (AlphaCtx ctx) = ctx.level == 0
 
 -- | Types that are instances of `Alpha` may participate in name representation.
 -- |
--- | Minimal instance is entirely empty, provided that your type is an instance
--- | of `Data.Generic.Rep.Generic`.
+-- | Minimal instance is entirely generic, provided that your type is an
+-- | instance of `Data.Generic.Rep.Generic`. E.g., the `Alpha` instance for
+-- | `TRec`.
 class Show a <= Alpha a where
   aeq' :: AlphaCtx -> a -> a -> Boolean
 
