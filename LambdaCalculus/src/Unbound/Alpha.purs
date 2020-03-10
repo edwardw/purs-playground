@@ -3,7 +3,7 @@ module Unbound.Alpha where
 import Prelude
 import Data.Either (Either(..))
 import Data.Functor.Contravariant (class Contravariant, cmap)
-import Data.Generic.Rep (Constructor(..), NoArguments(..), NoConstructors, Product(..), Sum(..))
+import Data.Generic.Rep (Argument(..), Constructor(..), NoArguments(..), NoConstructors, Product(..), Sum(..))
 import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj)
 import Data.Profunctor.Strong (first)
@@ -266,6 +266,32 @@ instance genericAlphaConstructor :: Alpha a => GenericAlpha (Constructor name a)
   glfreshen ctx (Constructor x) cont = lfreshen' ctx x (cont <<< Constructor)
 
   gacompare ctx (Constructor x) (Constructor y) = acompare' ctx x y
+
+
+instance genericAlphaArgument :: Alpha a => GenericAlpha (Argument a) where
+  gaeq ctx (Argument x) (Argument y) = aeq' ctx x y
+
+  gfvAny ctx nfn (Argument x) = map Argument $ fvAny' ctx nfn x
+
+  gclose ctx b (Argument y) = Argument $ close ctx b y
+
+  gopen ctx b (Argument y) = Argument $ open ctx b y
+
+  gisPat (Argument x) = isPat x
+
+  gisTerm (Argument x) = isTerm x
+
+  gnthPatFind (Argument x) = nthPatFind x
+
+  gnamePatFind (Argument x) = namePatFind x
+
+  gswaps ctx perm (Argument x) = Argument $ swaps' ctx perm x
+
+  gfreshen ctx (Argument x) = (first Argument) <$> (freshen' ctx x)
+
+  glfreshen ctx (Argument x) cont = lfreshen' ctx x (cont <<< Argument)
+
+  gacompare ctx (Argument x) (Argument y) = acompare' ctx x y
 
 
 instance genericAlphaSum :: (GenericAlpha a, GenericAlpha b) => GenericAlpha (Sum a b) where
