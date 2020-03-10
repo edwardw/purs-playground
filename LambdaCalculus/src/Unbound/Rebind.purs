@@ -20,6 +20,7 @@ instance showRebind :: (Show p1, Show p2) => Show (Rebind p1 p2) where
 instance alphaRebind
   :: (Alpha p1, Alpha p2, Generic (Rebind p1 p2) rep, GenericAlpha rep)
   => Alpha (Rebind p1 p2) where
+
   isTerm _ = Conj false
 
   isPat (Rebind p1 p2) = isPat p1 <> isPat p2
