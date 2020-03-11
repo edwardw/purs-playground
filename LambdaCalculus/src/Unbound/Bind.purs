@@ -5,7 +5,7 @@ import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..), isNothing)
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.Alpha (class Alpha, acompare', aeq', close, freshen', fvAny', incrLevelCtx, isPat, isTerm, lfreshen', open, patternCtx, swaps')
 
 
@@ -37,8 +37,8 @@ instance alphaBind :: (Alpha p, Alpha t) => Alpha (Bind p t) where
     B (open (patternCtx ctx) b p)
       (open (incrLevelCtx ctx) b t)
 
-  nthPatFind b = undefined
-  namePatFind b = undefined
+  nthPatFind b = unsafeThrow $ "Binding " <> show b <> " used as a pattern"
+  namePatFind b = unsafeThrow $ "Binding " <> show b <> " used as a pattern"
 
   swaps' ctx perm (B p t) =
     B (swaps' (patternCtx ctx) perm p)

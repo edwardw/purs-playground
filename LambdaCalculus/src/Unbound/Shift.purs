@@ -4,7 +4,7 @@ import Prelude
 import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.Alpha (class Alpha, acompare', aeq', close, decrLevelCtx, fvAny', isEmbed, isTermCtx, isZeroLevelCtx, namePatFind, nthPatFind, open, swaps')
 
 
@@ -27,12 +27,12 @@ instance alphaShift :: Alpha e => Alpha (Shift e) where
 
   freshen' ctx p =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "freshen' called on a term"
     else pure $ Tuple p mempty
 
   lfreshen' ctx p cont =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "freshen' called on a term"
     else cont p mempty
 
   aeq' ctx (Shift e1) (Shift e2) = aeq' ctx e1 e2
@@ -41,14 +41,14 @@ instance alphaShift :: Alpha e => Alpha (Shift e) where
 
   close ctx b se@(Shift e) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "close on Shift"
     else if isZeroLevelCtx ctx
          then se
          else Shift $ close (decrLevelCtx ctx) b e
 
   open ctx b se@(Shift e) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "open on Shift"
     else if isZeroLevelCtx ctx
          then se
          else Shift $ open (decrLevelCtx ctx) b e

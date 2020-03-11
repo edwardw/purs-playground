@@ -6,7 +6,7 @@ import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.Alpha (class Alpha, acompare', aeq', close, fvAny', isTerm, isTermCtx, open, swaps', termCtx)
 
 
@@ -34,12 +34,12 @@ instance alphaEmbed :: Alpha t => Alpha (Embed t) where
 
   freshen' ctx p =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "freshen' called on a term"
     else pure $ Tuple p mempty
 
   lfreshen' ctx p cont =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "lfreshen' called on a term"
     else cont p mempty
 
   aeq' ctx (Embed x) (Embed y) = aeq' (termCtx ctx) x y
@@ -51,12 +51,12 @@ instance alphaEmbed :: Alpha t => Alpha (Embed t) where
 
   close ctx b (Embed x) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "close on Embed"
     else Embed $ close (termCtx ctx) b x
 
   open ctx b (Embed x) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "close on Embed"
     else Embed $ open (termCtx ctx) b x
 
   nthPatFind _ = mempty

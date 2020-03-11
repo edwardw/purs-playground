@@ -4,7 +4,7 @@ import Prelude
 import Data.Generic.Rep (class Generic, from)
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.Alpha (class Alpha, class GenericAlpha, acompare', aeq', close, freshen', fvAny', gnamePatFind, gnthPatFind, incrLevelCtx, isPat, isTermCtx, lfreshen', open, swaps')
 
 
@@ -31,7 +31,7 @@ instance alphaRebind
 
   freshen' ctx (Rebind p1 p2) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "freshen' on Rebind in Term mode"
     else do
       Tuple p1' perm1 <- freshen' ctx p1
       Tuple p2' perm2 <- freshen' (incrLevelCtx ctx) (swaps' (incrLevelCtx ctx) perm1 p2)
@@ -39,7 +39,7 @@ instance alphaRebind
 
   lfreshen' ctx (Rebind p1 p2) cont =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "lfreshen' on Rebind in Term mode"
     else
       lfreshen' ctx p1 $ \p1' perm1 ->
       lfreshen' (incrLevelCtx ctx) (swaps' (incrLevelCtx ctx) perm1 p2) $ \p2' perm2 ->
