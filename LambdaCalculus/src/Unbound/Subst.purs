@@ -6,6 +6,7 @@ import Data.Foldable (all)
 import Data.Generic.Rep (class Generic, Argument(..), Constructor(..), NoArguments, NoConstructors, Product(..), Sum(..), from, to)
 import Data.Leibniz (type (~), coerceSymm, runLeibniz)
 import Data.Maybe (Maybe(..), maybe)
+import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..), fst)
 import Data.Typelevel.Undefined (undefined)
 import Unbound.Alpha (class Alpha)
@@ -41,13 +42,13 @@ class Subst b a where
   substs :: Array (Tuple (Name b) b) -> a -> a
 
 
-defaultSubst
-  :: forall a b f rep
-   . Subst b (f a)
-  => Generic (f a) rep
+genericSubst
+  :: forall a b rep
+   . Subst b a
+  => Generic a rep
   => GenericSubst b rep
-  => Name b -> b -> f a -> f a
-defaultSubst n u x =
+  => Name b -> b -> a -> a
+genericSubst n u x =
   if isFreeName n
   then case isvar x of
     Just (SubstName proof m) | runLeibniz proof m == n -> coerceSymm proof u
@@ -58,13 +59,13 @@ defaultSubst n u x =
   else undefined
 
 
-defaultSubsts
-  :: forall a b f rep
-   . Subst b (f a)
-  => Generic (f a) rep
+genericSubsts
+  :: forall a b rep
+   . Subst b a
+  => Generic a rep
   => GenericSubst b rep
-  => Array (Tuple (Name b) b) -> f a -> f a
-defaultSubsts ss x
+  => Array (Tuple (Name b) b) -> a -> a
+genericSubsts ss x
   | all (isFreeName <<< fst) ss =
     case isvar x of
       Just (SubstName proof m)
@@ -81,13 +82,13 @@ defaultSubsts ss x
   | otherwise = undefined
 
 
-defaultSubst2
-  :: forall a a' b f rep
-   . Subst b (f a a')
-  => Generic (f a a') rep
+genericSubst1
+  :: forall a b f rep
+   . Subst b (f a)
+  => Generic (f a) rep
   => GenericSubst b rep
-  => Name b -> b -> f a a' -> f a a'
-defaultSubst2 n u x =
+  => Name b -> b -> f a -> f a
+genericSubst1 n u x =
   if isFreeName n
   then case isvar x of
     Just (SubstName proof m) | runLeibniz proof m == n -> coerceSymm proof u
@@ -98,13 +99,53 @@ defaultSubst2 n u x =
   else undefined
 
 
-defaultSubsts2
+genericSubsts1
+  :: forall a b f rep
+   . Subst b (f a)
+  => Generic (f a) rep
+  => GenericSubst b rep
+  => Array (Tuple (Name b) b) -> f a -> f a
+genericSubsts1 ss x
+  | all (isFreeName <<< fst) ss =
+    case isvar x of
+      Just (SubstName proof m)
+        | Just (Tuple _ u) <- A.find ((_ == runLeibniz proof m) <<< fst) ss
+        -> coerceSymm proof u
+
+      _ -> case isCoerceVar x of
+        Just (SubstCoerce m f)
+          | Just (Tuple _ u) <- A.find ((_ == m) <<< fst) ss
+          -> maybe x identity (f u)
+
+        _ -> to <<< gsubsts ss $ from x
+
+  | otherwise = undefined
+
+
+genericSubst2
+  :: forall a a' b f rep
+   . Subst b (f a a')
+  => Generic (f a a') rep
+  => GenericSubst b rep
+  => Name b -> b -> f a a' -> f a a'
+genericSubst2 n u x =
+  if isFreeName n
+  then case isvar x of
+    Just (SubstName proof m) | runLeibniz proof m == n -> coerceSymm proof u
+    _ ->
+      case isCoerceVar x of
+        Just (SubstCoerce m f) | m == n -> maybe x identity (f u)
+        _ -> to <<< gsubst n u $ from x
+  else undefined
+
+
+genericSubsts2
   :: forall a a' b f rep
    . Subst b (f a a')
   => Generic (f a a') rep
   => GenericSubst b rep
   => Array (Tuple (Name b) b) -> f a a' -> f a a'
-defaultSubsts2 ss x
+genericSubsts2 ss x
   | all (isFreeName <<< fst) ss =
     case isvar x of
       Just (SubstName proof m)
@@ -142,9 +183,12 @@ instance genericSubstNoArguments :: GenericSubst b NoArguments where
   gsubsts _  = identity
 
 
-instance genericSubstConstructor :: Subst b a => GenericSubst b (Constructor name a) where
-  gsubst nm val (Constructor x) = Constructor $ subst nm val x
-  gsubsts ss (Constructor x) = Constructor $ substs ss x
+instance genericSubstConstructor
+  :: (GenericSubst b a, IsSymbol name)
+  => GenericSubst b (Constructor name a) where
+
+  gsubst nm val (Constructor x) = Constructor $ gsubst nm val x
+  gsubsts ss (Constructor x) = Constructor $ gsubsts ss x
 
 
 instance genericSubstArgument :: Subst b a => GenericSubst b (Argument a) where
@@ -183,6 +227,19 @@ instance substInt :: Subst b Int where
 
 
 --------------------------------------------------------------------------------
+-- Subst instances for the usual types -----------------------------------------
+--------------------------------------------------------------------------------
+
+
+instance substUnit :: Subst b Unit where
+  isvar _       = Nothing
+  isCoerceVar _ = Nothing
+  subst _ _     = identity
+  substs _      = identity
+
+
+
+--------------------------------------------------------------------------------
 -- Subst instances for Unbound primitives --------------------------------------
 --------------------------------------------------------------------------------
 
@@ -201,14 +258,11 @@ instance substAnyName :: Subst b AnyName where
   substs _      = identity
 
 
-instance substEmbed
-  :: (Subst b a, Generic (Embed a) rep, GenericSubst b rep)
-  => Subst b (Embed a) where
-
+instance substEmbed :: Subst b a => Subst b (Embed a) where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
-  subst         = defaultSubst
-  substs        = defaultSubsts
+  subst n u x   = genericSubst1 n u x
+  substs ss x   = genericSubsts1 ss x
 
 
 instance substShift :: Subst b e => Subst b (Shift e) where
@@ -220,43 +274,34 @@ instance substShift :: Subst b e => Subst b (Shift e) where
 
 
 instance substBind
-  :: (Subst c a, Subst c b, Alpha a, Alpha b, Generic (Bind a b) rep, GenericSubst c rep)
+  :: (Subst c a, Subst c b, Alpha a, Alpha b)
   => Subst c (Bind a b) where
 
   isvar _       = Nothing
   isCoerceVar _ = Nothing
-  subst         = defaultSubst2
-  substs        = defaultSubsts2
+  subst n u x   = genericSubst2 n u x
+  substs ss x   = genericSubsts2 ss x
 
 
-instance substRebind
-  :: (Subst c p1, Subst c p2, Generic (Rebind p1 p2) rep, GenericSubst c rep)
-  => Subst c (Rebind p1 p2) where
-
+instance substRebind :: (Subst c p1, Subst c p2) => Subst c (Rebind p1 p2) where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
-  subst         = defaultSubst2
-  substs        = defaultSubsts2
+  subst n u x   = genericSubst2 n u x
+  substs ss x   = genericSubsts2 ss x
 
 
-instance substRec
-  :: (Subst b a, Generic (Rec a) rep, GenericSubst b rep)
-  => Subst b (Rec a) where
-
+instance substRec :: Subst b a => Subst b (Rec a) where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
-  subst         = defaultSubst
-  substs        = defaultSubsts
+  subst n u x   = genericSubst1 n u x
+  substs ss x   = genericSubsts1 ss x
 
 
-instance substTRec
-  :: (Alpha a, Subst b a, Generic (TRec a) rep, GenericSubst b rep)
-  => Subst b (TRec a) where
-
+instance substTRec :: (Alpha a, Subst b a) => Subst b (TRec a) where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
-  subst         = defaultSubst
-  substs        = defaultSubsts
+  subst n u x   = genericSubst1 n u x
+  substs ss x   = genericSubsts1 ss x
 
 
 instance substIgnore :: Subst b (Ignore a) where

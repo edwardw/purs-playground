@@ -2,13 +2,15 @@ module Unbound.Alpha where
 
 import Prelude
 import Data.Either (Either(..))
+import Data.Function (on)
 import Data.Functor.Contravariant (class Contravariant, cmap)
-import Data.Generic.Rep (Argument(..), Constructor(..), NoArguments(..), NoConstructors, Product(..), Sum(..))
+import Data.Generic.Rep (class Generic, Argument(..), Constructor(..), NoArguments(..), NoConstructors, Product(..), Sum(..), from, to)
 import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj)
 import Data.Profunctor.Strong (first)
 import Data.Set (Set)
 import Data.Set as S
+import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, typeOf)
 import Data.Typelevel.Undefined (undefined)
@@ -243,30 +245,33 @@ instance genericAlphaNoArguments :: GenericAlpha NoArguments where
   gacompare _ _ _ = EQ
 
 
-instance genericAlphaConstructor :: Alpha a => GenericAlpha (Constructor name a) where
-  gaeq ctx (Constructor x) (Constructor y) = aeq' ctx x y
+instance genericAlphaConstructor
+  :: (GenericAlpha a, IsSymbol name)
+  => GenericAlpha (Constructor name a) where
 
-  gfvAny ctx nfn (Constructor x) = map Constructor $ fvAny' ctx nfn x
+  gaeq ctx (Constructor x) (Constructor y) = gaeq ctx x y
 
-  gclose ctx b (Constructor y) = Constructor $ close ctx b y
+  gfvAny ctx nfn (Constructor x) = map Constructor $ gfvAny ctx nfn x
 
-  gopen ctx b (Constructor y) = Constructor $ open ctx b y
+  gclose ctx b (Constructor y) = Constructor $ gclose ctx b y
 
-  gisPat (Constructor x) = isPat x
+  gopen ctx b (Constructor y) = Constructor $ gopen ctx b y
 
-  gisTerm (Constructor x) = isTerm x
+  gisPat (Constructor x) = gisPat x
 
-  gnthPatFind (Constructor x) = nthPatFind x
+  gisTerm (Constructor x) = gisTerm x
 
-  gnamePatFind (Constructor x) = namePatFind x
+  gnthPatFind (Constructor x) = gnthPatFind x
 
-  gswaps ctx perm (Constructor x) = Constructor $ swaps' ctx perm x
+  gnamePatFind (Constructor x) = gnamePatFind x
 
-  gfreshen ctx (Constructor x) = (first Constructor) <$> (freshen' ctx x)
+  gswaps ctx perm (Constructor x) = Constructor $ gswaps ctx perm x
 
-  glfreshen ctx (Constructor x) cont = lfreshen' ctx x (cont <<< Constructor)
+  gfreshen ctx (Constructor x) = (first Constructor) <$> (gfreshen ctx x)
 
-  gacompare ctx (Constructor x) (Constructor y) = acompare' ctx x y
+  glfreshen ctx (Constructor x) cont = glfreshen ctx x (cont <<< Constructor)
+
+  gacompare ctx (Constructor x) (Constructor y) = gacompare ctx x y
 
 
 instance genericAlphaArgument :: Alpha a => GenericAlpha (Argument a) where
@@ -384,6 +389,95 @@ instance genericAlphaProduct :: (GenericAlpha a, GenericAlpha b) => GenericAlpha
     (gacompare ctx f1 f2) <> (gacompare ctx g1 g2)
 
 
+genericAeq
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => AlphaCtx -> a -> a -> Boolean
+genericAeq ctx = gaeq ctx `on` from
+
+genericFvAny
+  :: forall a rep g
+   . Generic a rep
+  => GenericAlpha rep
+  => Contravariant g
+  => Applicative g
+  => AlphaCtx -> (AnyName -> g AnyName) -> a -> g a
+genericFvAny ctx nfn = map to <<< gfvAny ctx nfn <<< from
+
+genericClose
+  :: forall a rep
+   . Generic a rep
+   => GenericAlpha rep
+   => AlphaCtx -> NamePatFind -> a -> a
+genericClose ctx b = to <<< gclose ctx b <<< from
+
+genericOpen
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => AlphaCtx -> NthPatFind -> a -> a
+genericOpen ctx b = to <<< gopen ctx b <<< from
+
+genericIsPat
+  :: forall a rep
+   . Generic a rep
+   => GenericAlpha rep
+   => a -> Maybe (Set AnyName)
+genericIsPat = gisPat <<< from
+
+genericIsTerm
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => a -> Conj Boolean
+genericIsTerm = gisTerm <<< from
+
+genericNthPatFind
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => a -> NthPatFind
+genericNthPatFind = gnthPatFind <<< from
+
+genericNamePatFind
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => a -> NamePatFind
+genericNamePatFind = gnamePatFind <<< from
+
+genericSwaps
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => AlphaCtx -> Perm AnyName -> a -> a
+genericSwaps ctx perm = to <<< gswaps ctx perm <<< from
+
+genericFreshen
+  :: forall a rep m
+   . Generic a rep
+  => GenericAlpha rep
+  => Fresh m
+  => AlphaCtx -> a -> m (Tuple a (Perm AnyName))
+genericFreshen ctx = liftM1 (first to) <<< gfreshen ctx <<< from
+
+genericLFreshen
+  :: forall a rep m b
+   . Generic a rep
+  => GenericAlpha rep
+  => LFresh m
+  => AlphaCtx -> a -> (a -> Perm AnyName -> m b) -> m b
+genericLFreshen ctx a cont = glfreshen ctx (from a) (cont <<< to)
+
+genericACompare
+  :: forall a rep
+   . Generic a rep
+  => GenericAlpha rep
+  => AlphaCtx -> a -> a -> Ordering
+genericACompare ctx = gacompare ctx `on` from
+
+
 
 --------------------------------------------------------------------------------
 -- Alpha instances for the usual types -----------------------------------------
@@ -433,6 +527,22 @@ instance alphaChar :: Alpha Char where
   lfreshen' _ i cont = cont i mempty
 
   acompare' _ i j = compare i j
+
+
+instance alphaUnit :: Alpha Unit where
+  aeq' _ _ _         = true
+  fvAny' _ _ i       = pure i
+  close _ _ i        = i
+  open _ _ i         = i
+  isPat _            = mempty
+  isTerm _           = mempty
+  isEmbed _          = false
+  nthPatFind _       = mempty
+  namePatFind _      = mempty
+  swaps' _ _ i       = i
+  freshen' _ i       = pure $ Tuple i mempty
+  lfreshen' _ i cont = cont i mempty
+  acompare' _ _ _    = EQ
 
 
 

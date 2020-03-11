@@ -1,11 +1,9 @@
 module Unbound.Rec where
 
 import Prelude
-import Data.Function (on)
-import Data.Generic.Rep (class Generic, from, to)
+import Data.Generic.Rep (class Generic)
 import Data.Monoid.Conj (Conj(..))
-import Data.Profunctor.Strong (first)
-import Unbound.Alpha (class Alpha, class GenericAlpha, close, gacompare, gaeq, gclose, gfreshen, gfvAny, gisPat, gisTerm, glfreshen, gnamePatFind, gnthPatFind, gopen, gswaps, incrLevelCtx, initialCtx, isPat, namePatFind, nthPatFind, open, patternCtx)
+import Unbound.Alpha (class Alpha, close, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSwaps, incrLevelCtx, initialCtx, isPat, namePatFind, nthPatFind, open, patternCtx)
 import Unbound.Bind (Bind(..))
 
 
@@ -26,63 +24,40 @@ instance showTRec :: Show p => Show (TRec p) where
   show (TRec (B r _)) = show r
 
 
-instance alphaRec
-  :: (Alpha p, Generic (Rec p) rep, GenericAlpha rep)
-  => Alpha (Rec p) where
+instance alphaRec :: Alpha p => Alpha (Rec p) where
+  isTerm _             = Conj false
+  isPat (Rec p)        = isPat p
 
-  isTerm _ = Conj false
-  isPat (Rec p) = isPat p
+  nthPatFind (Rec p)   = nthPatFind p
+  namePatFind (Rec p)  = namePatFind p
 
-  nthPatFind (Rec p) = nthPatFind p
-  namePatFind (Rec p) = namePatFind p
+  open ctx b (Rec p)   = Rec $ open (incrLevelCtx ctx) b p
+  close ctx b (Rec p)  = Rec $ close (incrLevelCtx ctx) b p
 
-  open ctx b (Rec p) = Rec $ open (incrLevelCtx ctx) b p
-  close ctx b (Rec p) = Rec $ close (incrLevelCtx ctx) b p
-
-  aeq' ctx = (gaeq ctx) `on` from
-
-  fvAny' ctx nfn = map to <<< gfvAny ctx nfn <<< from
-
-  isEmbed _ = false
-
-  swaps' ctx perm = to <<< gswaps ctx perm <<< from
-
-  lfreshen' ctx a cont = glfreshen ctx (from a) (cont <<< to)
-
-  freshen' ctx = liftM1 (first to) <<< gfreshen ctx <<< from
-
-  acompare' ctx = gacompare ctx `on` from
+  aeq' ctx x y         = genericAeq ctx x y
+  fvAny' ctx nfn x     = genericFvAny ctx nfn x
+  isEmbed _            = false
+  swaps' ctx perm x    = genericSwaps ctx perm x
+  freshen' ctx x       = genericFreshen ctx x
+  lfreshen' ctx a cont = genericLFreshen ctx a cont
+  acompare' ctx x y    = genericACompare ctx x y
 
 
-instance alphaTRec
-  :: (Alpha p, Generic (TRec p) rep, GenericAlpha rep)
-  => Alpha (TRec p) where
-
-  aeq' ctx = (gaeq ctx) `on` from
-
-  fvAny' ctx nfn = map to <<< gfvAny ctx nfn <<< from
-
-  close ctx b = to <<< gclose ctx b <<< from
-
-  open ctx b = to <<< gopen ctx b <<< from
-
-  isPat = gisPat <<< from
-
-  isTerm = gisTerm <<< from
-
-  isEmbed _ = false
-
-  nthPatFind = gnthPatFind <<< from
-
-  namePatFind = gnamePatFind <<< from
-
-  swaps' ctx perm = to <<< gswaps ctx perm <<< from
-
-  lfreshen' ctx a cont = glfreshen ctx (from a) (cont <<< to)
-
-  freshen' ctx = liftM1 (first to) <<< gfreshen ctx <<< from
-
-  acompare' ctx = gacompare ctx `on` from
+instance alphaTRec :: Alpha p => Alpha (TRec p) where
+  -- Try to write it in point-free style, the compiler will complain.
+  aeq' ctx x y         = genericAeq ctx x y
+  fvAny' ctx nfn x     = genericFvAny ctx nfn x
+  close ctx b x        = genericClose ctx b x
+  open ctx b x         = genericOpen ctx b x
+  isPat x              = genericIsPat x
+  isTerm x             = genericIsTerm x
+  isEmbed _            = false
+  nthPatFind x         = genericNthPatFind x
+  namePatFind x        = genericNamePatFind x
+  swaps' ctx perm x    = genericSwaps ctx perm x
+  freshen' ctx x       = genericFreshen ctx x
+  lfreshen' ctx a cont = genericLFreshen ctx a cont
+  acompare' ctx x y    = genericACompare ctx x y
 
 
 -- | Constructor for recursive patterns.
