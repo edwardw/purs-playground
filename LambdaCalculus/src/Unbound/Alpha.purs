@@ -13,7 +13,7 @@ import Data.Set as S
 import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, typeOf)
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Type.Proxy (Proxy(..))
 import Unbound.Fresh (class Fresh, fresh)
 import Unbound.LFresh (class LFresh, avoid, lfresh)
@@ -568,10 +568,10 @@ instance alphaName :: Typeable a => Alpha (Name a) where
       then
         case b.runNthPatFind k of
           Right (AnyName (Tuple t v)) ->
-            if t == typeOf (Proxy :: Proxy a)
+            if t == typeOf (Proxy :: Proxy (Name a))
             then unsafeCoerce v
-            else undefined
-          Left _ -> undefined
+            else unsafeThrow "open: inconsistent sorts"
+          Left _ -> unsafeThrow "inconsistency - pattern had too few variables"
       else a
     _ -> a
 
@@ -608,7 +608,7 @@ instance alphaName :: Typeable a => Alpha (Name a) where
         AnyName (Tuple t v) ->
           if t == typeOf (Proxy :: Proxy (Name a))
           then unsafeCoerce v
-          else undefined
+          else unsafeThrow "Internal error swaps' on a Name returned permuted name of wrong sort"
     else nm
 
   freshen' ctx nm =
@@ -616,14 +616,14 @@ instance alphaName :: Typeable a => Alpha (Name a) where
     then do
       nm' <- fresh nm
       pure $ Tuple nm' (single (mkAnyName nm) (mkAnyName nm'))
-    else undefined
+    else unsafeThrow "freshen' on a Name in term position"
 
   lfreshen' ctx nm cont =
     if not (isTermCtx ctx)
     then do
       nm' <- lfresh nm
       avoid [mkAnyName nm'] <<< cont nm' $ single (mkAnyName nm) (mkAnyName nm')
-    else undefined
+    else unsafeThrow "lfreshen' on a Name in term position"
 
   acompare' ctx nm1 nm2 = case Tuple nm1 nm2 of
     Tuple (Fn s1 i1) (Fn s2 i2) | isTermCtx ctx ->
@@ -662,15 +662,15 @@ instance alphaAnyName :: Alpha AnyName where
 
   freshen' ctx nm@(AnyName (Tuple t v)) =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "freshen' on AnyName in Term mode"
     else do
       v' <- fresh v
       let nm' = AnyName $ Tuple t v'
       pure $ Tuple nm' (single nm nm')
 
-  lfreshen' ctx nm@(AnyName (Tuple t v)) cont = undefined
+  lfreshen' ctx nm@(AnyName (Tuple t v)) cont =
     if isTermCtx ctx
-    then undefined
+    then unsafeThrow "lfreshen' on AnyName in Term mode"
     else do
       v' <- lfresh v
       let nm' = AnyName $ Tuple t v'

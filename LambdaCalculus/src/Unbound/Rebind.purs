@@ -14,7 +14,7 @@ derive instance eqRebind :: (Eq p1, Eq p2) => Eq (Rebind p1 p2)
 derive instance genericRebind :: Generic (Rebind p1 p2) _
 
 instance showRebind :: (Show p1, Show p2) => Show (Rebind p1 p2) where
-  show (Rebind p1 p2) = "<<(" <> show p1 <> ")>> " <> show p2
+  show (Rebind p1 p2) = "(<<" <> show p1 <> ">> " <> show p2 <> ")"
 
 
 instance alphaRebind

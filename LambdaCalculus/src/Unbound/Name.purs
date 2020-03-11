@@ -3,7 +3,7 @@ module Unbound.Name where
 import Prelude
 import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, class Typeable1, TypeRep, mkTyRep, typeOf)
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Type.Proxy (Proxy(..))
 import Unsafe.Coerce (unsafeCoerce)
 
@@ -54,13 +54,13 @@ makeName = Fn
 name2Int :: forall a. Name a -> Int
 name2Int = case _ of
   Fn _ i -> i
-  Bn _ _ -> undefined
+  Bn _ _ -> unsafeThrow "Internal Error: cannot call name2Int for bound names"
 
 
 name2String :: forall a. Name a -> String
 name2String = case _ of
   Fn s _ -> s
-  Bn _ _ -> undefined
+  Bn _ _ -> unsafeThrow "Internal Error: cannot call name2String for bound names"
 
 
 -- | An `AnyName` is a name that stands for a term of some type.

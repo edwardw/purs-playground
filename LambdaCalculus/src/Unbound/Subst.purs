@@ -8,7 +8,7 @@ import Data.Leibniz (type (~), coerceSymm, runLeibniz)
 import Data.Maybe (Maybe(..), maybe)
 import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..), fst)
-import Data.Typelevel.Undefined (undefined)
+import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.Alpha (class Alpha)
 import Unbound.Bind (Bind)
 import Unbound.Embed (Embed)
@@ -56,7 +56,7 @@ genericSubst n u x =
       case isCoerceVar x of
         Just (SubstCoerce m f) | m == n -> maybe x identity (f u)
         _ -> to <<< gsubst n u $ from x
-  else undefined
+  else unsafeThrow $ "Cannot substitute for bound variable " <> show n
 
 
 genericSubsts
@@ -79,7 +79,7 @@ genericSubsts ss x
 
         _ -> to <<< gsubsts ss $ from x
 
-  | otherwise = undefined
+  | otherwise = unsafeThrow $ "Cannot substitute for bound variable in: " <> show (map fst ss)
 
 
 genericSubst1
@@ -96,7 +96,7 @@ genericSubst1 n u x =
       case isCoerceVar x of
         Just (SubstCoerce m f) | m == n -> maybe x identity (f u)
         _ -> to <<< gsubst n u $ from x
-  else undefined
+  else unsafeThrow $ "Cannot substitute for bound variable " <> show n
 
 
 genericSubsts1
@@ -119,7 +119,7 @@ genericSubsts1 ss x
 
         _ -> to <<< gsubsts ss $ from x
 
-  | otherwise = undefined
+  | otherwise = unsafeThrow $ "Cannot substitute for bound variable in: " <> show (map fst ss)
 
 
 genericSubst2
@@ -136,7 +136,7 @@ genericSubst2 n u x =
       case isCoerceVar x of
         Just (SubstCoerce m f) | m == n -> maybe x identity (f u)
         _ -> to <<< gsubst n u $ from x
-  else undefined
+  else unsafeThrow $ "Cannot substitute for bound variable " <> show n
 
 
 genericSubsts2
@@ -159,7 +159,7 @@ genericSubsts2 ss x
 
         _ -> to <<< gsubsts ss $ from x
 
-  | otherwise = undefined
+  | otherwise = unsafeThrow $ "Cannot substitute for bound variable in: " <> show (map fst ss)
 
 
 

@@ -14,7 +14,7 @@ data Bind p t = B p t
 derive instance genericBind :: Generic (Bind p t) _
 
 instance showBind :: (Show p, Show t) => Show (Bind p t) where
-  show (B p t) = "(<" <> show p <> ">)" <> show t
+  show (B p t) = "(<" <> show p <> "> " <> show t <> ")"
 
 instance alphaBind :: (Alpha p, Alpha t) => Alpha (Bind p t) where
   aeq' ctx (B p1 t1) (B p2 t2) =
