@@ -1,10 +1,10 @@
-module Unbound.Rec where
+module Unbound.LocallyNameless.Rec where
 
 import Prelude
 import Data.Generic.Rep (class Generic)
 import Data.Monoid.Conj (Conj(..))
-import Unbound.Alpha (class Alpha, close, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSwaps, incrLevelCtx, initialCtx, isPat, namePatFind, nthPatFind, open, patternCtx)
-import Unbound.Bind (Bind(..))
+import Unbound.LocallyNameless.Alpha (class Alpha, close, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSwaps, incrLevelCtx, initialCtx, isPat, namePatFind, nthPatFind, open, patternCtx)
+import Unbound.LocallyNameless.Bind (Bind(..))
 
 
 newtype Rec p = Rec p

@@ -1,4 +1,4 @@
-module Unbound.Embed where
+module Unbound.LocallyNameless.Embed where
 
 import Prelude
 import Data.Foldable (and)
@@ -7,7 +7,7 @@ import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
 import Effect.Exception.Unsafe (unsafeThrow)
-import Unbound.Alpha (class Alpha, acompare', aeq', close, fvAny', isTerm, isTermCtx, open, swaps', termCtx)
+import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, fvAny', isTerm, isTermCtx, open, swaps', termCtx)
 
 
 newtype Embed t = Embed t

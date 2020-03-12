@@ -1,4 +1,4 @@
-module Unbound.Bind where
+module Unbound.LocallyNameless.Bind where
 
 import Prelude
 import Data.Generic.Rep (class Generic)
@@ -6,7 +6,7 @@ import Data.Maybe (Maybe(..), isNothing)
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
 import Effect.Exception.Unsafe (unsafeThrow)
-import Unbound.Alpha (class Alpha, acompare', aeq', close, freshen', fvAny', incrLevelCtx, isPat, isTerm, lfreshen', open, patternCtx, swaps')
+import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, freshen', fvAny', incrLevelCtx, isPat, isTerm, lfreshen', open, patternCtx, swaps')
 
 
 data Bind p t = B p t

@@ -21,8 +21,7 @@ You can edit this file as you like.
     , "test-unit"
     , "transformers"
     , "typelevel"
-    , "unordered-collections"
     ]
 , packages = ./packages.dhall
-, sources = [ "src/**/*.purs", "test/**/*.purs" ]
+, sources = [ "src/**/*.purs", "test/**/*.purs", "examples/**/*.purs" ]
 }

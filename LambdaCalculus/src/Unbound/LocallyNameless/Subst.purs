@@ -1,4 +1,4 @@
-module Unbound.Subst where
+module Unbound.LocallyNameless.Subst where
 
 import Prelude
 import Data.Array as A
@@ -9,21 +9,14 @@ import Data.Maybe (Maybe(..), maybe)
 import Data.Symbol (class IsSymbol)
 import Data.Tuple (Tuple(..), fst)
 import Effect.Exception.Unsafe (unsafeThrow)
-import Unbound.Alpha (class Alpha)
-import Unbound.Bind (Bind)
-import Unbound.Embed (Embed)
-import Unbound.Ignore (Ignore)
-import Unbound.Name (AnyName, Name, isFreeName)
-import Unbound.Rebind (Rebind)
-import Unbound.Rec (Rec, TRec)
-import Unbound.Shift (Shift(..))
-
-
-data SubstName a b
-  = SubstName (a ~ b) (Name a)
-
-data SubstCoerce a b
-  = SubstCoerce (Name b) (b -> Maybe a)
+import Unbound.LocallyNameless.Alpha (class Alpha)
+import Unbound.LocallyNameless.Bind (Bind)
+import Unbound.LocallyNameless.Embed (Embed)
+import Unbound.LocallyNameless.Ignore (Ignore)
+import Unbound.LocallyNameless.Name (AnyName, Name, isFreeName)
+import Unbound.LocallyNameless.Rebind (Rebind)
+import Unbound.LocallyNameless.Rec (Rec, TRec)
+import Unbound.LocallyNameless.Shift (Shift(..))
 
 
 
@@ -32,14 +25,53 @@ data SubstCoerce a b
 --------------------------------------------------------------------------------
 
 
+-- | Types that are instances of `Subst` may participate in capture-avoiding
+-- | substitution
+-- |
+-- | The minimal definition is generic, provided your type is an instance of
+-- | `Data.Generic.Rep.Generic`. The generic instance just propagate the
+-- | substitution into the constituent factors.
+-- |
+-- | If you identity the variable occurrences by implementing `isvar` function,
+-- | the derived `subst` function will be able to substitute a factor for a
+-- | variable.
+-- |
+-- |    ```
+-- |    data Factor
+-- |      = V Var
+-- |      | C Int
+-- |      | Subexpr Expr
+-- |    derive instance genericFactor :: Generic Factor _
+-- |    instance substFactor :: Subst Factor where
+-- |      isvar = case _ of
+-- |        V v -> Just (SubstName identity v)
+-- |        _   -> Nothing
+-- |    ```
+-- |
+-- | Instances of `Subst b a` are terms of type `a` that may contain variables
+-- | of type `b` that may participate in capture-avoiding substitution.
 class Subst b a where
+  -- | This is the only method that must be implemented.
   isvar :: a -> Maybe (SubstName a b)
 
+  -- | This is an alternative version of `isvar`, usable in the case that the
+  -- | substitution argument doesn't have *exactly* the same type as the term
+  -- | it should be substituted into.
+  -- | The default implementation always returns `Nothing`.
   isCoerceVar :: a -> Maybe (SubstCoerce a b)
 
+  -- | `subst nm e tm` substitutes `e` for `nm` in `tm`. It has a generic
+  -- | implementation in terms of `isvar`.
   subst :: Name b -> b -> a -> a
 
   substs :: Array (Tuple (Name b) b) -> a -> a
+
+
+data SubstName a b
+  = SubstName (a ~ b) (Name a)
+
+data SubstCoerce a b
+  = SubstCoerce (Name b) (b -> Maybe a)
 
 
 genericSubst
@@ -196,7 +228,7 @@ instance genericSubstArgument :: Subst b a => GenericSubst b (Argument a) where
   gsubsts ss (Argument x) = Argument $ substs ss x
 
 
-instance genericSubstSun
+instance genericSubstSum
   :: (GenericSubst b f, GenericSubst b g)
   => GenericSubst b (Sum f g) where
 
@@ -218,6 +250,12 @@ instance genericSubstProduct
     Product (gsubsts ss x) (gsubsts ss y)
 
 
+
+--------------------------------------------------------------------------------
+-- Subst instances for the usual types -----------------------------------------
+--------------------------------------------------------------------------------
+
+
 instance substInt :: Subst b Int where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
@@ -225,17 +263,18 @@ instance substInt :: Subst b Int where
   substs _      = identity
 
 
-
---------------------------------------------------------------------------------
--- Subst instances for the usual types -----------------------------------------
---------------------------------------------------------------------------------
-
-
 instance substUnit :: Subst b Unit where
   isvar _       = Nothing
   isCoerceVar _ = Nothing
   subst _ _     = identity
   substs _      = identity
+
+
+instance substTuple :: (Subst c a, Subst c b) => Subst c (Tuple a b) where
+  isvar _               = Nothing
+  isCoerceVar _         = Nothing
+  subst n u (Tuple x y) = Tuple (subst n u x) (subst n u y)
+  substs ss (Tuple x y) = Tuple (substs ss x) (substs ss y)
 
 
 

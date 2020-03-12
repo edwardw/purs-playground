@@ -1,4 +1,4 @@
-module Unbound.Alpha where
+module Unbound.LocallyNameless.Alpha where
 
 import Prelude
 import Data.Either (Either(..))
@@ -15,9 +15,9 @@ import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, typeOf)
 import Effect.Exception.Unsafe (unsafeThrow)
 import Type.Proxy (Proxy(..))
-import Unbound.Fresh (class Fresh, fresh)
-import Unbound.LFresh (class LFresh, avoid, lfresh)
-import Unbound.Name (AnyName(..), Name(..), isFreeName, mkAnyName)
+import Unbound.LocallyNameless.Fresh (class Fresh, fresh)
+import Unbound.LocallyNameless.LFresh (class LFresh, avoid, lfresh)
+import Unbound.LocallyNameless.Name (AnyName(..), Name(..), isFreeName, mkAnyName)
 import Unbound.PermM (Perm, single)
 import Unbound.PermM as PermM
 import Unsafe.Coerce (unsafeCoerce)
@@ -543,6 +543,37 @@ instance alphaUnit :: Alpha Unit where
   freshen' _ i       = pure $ Tuple i mempty
   lfreshen' _ i cont = cont i mempty
   acompare' _ _ _    = EQ
+
+
+instance alphaTuple :: (Alpha a, Alpha b) => Alpha (Tuple a b) where
+  aeq' ctx (Tuple x1 y1) (Tuple x2 y2) =
+    aeq' ctx x1 x2 && aeq' ctx y1 y2
+
+  fvAny' ctx nfn (Tuple x y) =
+    Tuple <$> fvAny' ctx nfn x
+          <*> fvAny' ctx nfn y
+
+  close ctx b (Tuple x y)     = Tuple (close ctx b x) (close ctx b y)
+  open ctx b (Tuple x y)      = Tuple (open ctx b x) (open ctx b y)
+  isPat (Tuple x y)           = isPat x <> isPat y
+  isTerm (Tuple x y)          = isTerm x <> isTerm y
+  isEmbed _                   = false
+  nthPatFind (Tuple x y)      = nthPatFind x <> nthPatFind y
+  namePatFind (Tuple x y)     = namePatFind x <> namePatFind y
+  swaps' ctx perm (Tuple x y) = Tuple (swaps' ctx perm x) (swaps' ctx perm y)
+
+  freshen' ctx (Tuple x y) = do
+    Tuple y' perm2 <- freshen' ctx y
+    Tuple x' perm1 <- freshen' ctx (swaps' ctx perm2 x)
+    pure $ Tuple (Tuple x' y') (perm1 <> perm2)
+
+  lfreshen' ctx (Tuple x y) cont =
+    lfreshen' ctx y $ \y' perm2 ->
+    lfreshen' ctx (swaps' ctx perm2 x) $ \x' perm1 ->
+    cont (Tuple x' y') (perm1 <> perm2)
+
+  acompare' ctx (Tuple x1 y1) (Tuple x2 y2) =
+    acompare' ctx x1 x2 <> acompare' ctx y1 y2
 
 
 

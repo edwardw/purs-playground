@@ -10,12 +10,7 @@ import Effect.Exception.Unsafe (unsafeThrow)
 import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
-import Unbound.Alpha (class Alpha, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSwaps)
-import Unbound.Bind (Bind)
-import Unbound.Fresh (FreshM, runFreshM)
-import Unbound.Name (Name, s2n)
-import Unbound.Operations (bnd, unbnd)
-import Unbound.Subst (class Subst, SubstName(..), genericSubst, genericSubsts, subst)
+import Unbound.LocallyNameless (class Alpha, class Subst, Bind, FreshM, Name, SubstName(..), bind_, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSubst, genericSubsts, genericSwaps, runFreshM, s2n, subst, unbind_)
 
 
 testUnbound :: Effect Unit
@@ -86,7 +81,7 @@ eval = case _ of
     v2 <- eval e2
     case v1 of
       Lam bnd -> do
-        Tuple x body <- unbnd bnd
+        Tuple x body <- unbind_ bnd
         let body' = subst x v2 body
         eval body'
       _ -> unsafeThrow "application of non-lambda"
@@ -96,5 +91,5 @@ example :: Expr
 example =
   let x = s2n "x"
       y = s2n "y"
-      e = Lam $ bnd x (Lam $ bnd y (App (V y) (V x)))
+      e = Lam $ bind_ x (Lam $ bind_ y (App (V y) (V x)))
   in runFreshM $ eval (App (App e e) e)

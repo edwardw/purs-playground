@@ -1,4 +1,4 @@
-module Unbound.LFresh where
+module Unbound.LocallyNameless.LFresh where
 
 import Prelude
 import Control.Monad.Reader (class MonadTrans, ReaderT, ask, lift, local, runReader, runReaderT)
@@ -9,7 +9,7 @@ import Data.Set (Set)
 import Data.Set as S
 import Data.Typeable (class Typeable)
 import Data.Typelevel.Undefined (undefined)
-import Unbound.Name (AnyName, Name, makeName, mkAnyName, name2String)
+import Unbound.LocallyNameless.Name (AnyName, Name, makeName, mkAnyName, name2String)
 
 
 class Monad m <= LFresh m where

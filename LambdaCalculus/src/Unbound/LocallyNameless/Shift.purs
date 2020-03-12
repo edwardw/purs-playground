@@ -1,11 +1,11 @@
-module Unbound.Shift where
+module Unbound.LocallyNameless.Shift where
 
 import Prelude
 import Data.Maybe (Maybe(..))
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
 import Effect.Exception.Unsafe (unsafeThrow)
-import Unbound.Alpha (class Alpha, acompare', aeq', close, decrLevelCtx, fvAny', isEmbed, isTermCtx, isZeroLevelCtx, namePatFind, nthPatFind, open, swaps')
+import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, decrLevelCtx, fvAny', isEmbed, isTermCtx, isZeroLevelCtx, namePatFind, nthPatFind, open, swaps')
 
 
 newtype Shift e = Shift e

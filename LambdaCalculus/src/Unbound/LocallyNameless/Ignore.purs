@@ -1,11 +1,11 @@
-module Unbound.Ignore where
+module Unbound.LocallyNameless.Ignore where
 
 import Prelude
 import Data.Either (Either(..))
 import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
-import Unbound.Alpha (class Alpha, NamePatFind(..), NthPatFind(..))
+import Unbound.LocallyNameless.Alpha (class Alpha, NamePatFind(..), NthPatFind(..))
 
 
 data Ignore t = I t

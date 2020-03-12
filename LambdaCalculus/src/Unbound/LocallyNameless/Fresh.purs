@@ -1,10 +1,10 @@
-module Unbound.Fresh where
+module Unbound.LocallyNameless.Fresh where
 
 import Prelude
 import Control.Monad.Cont (class MonadCont, callCC)
 import Control.Monad.State (class MonadTrans, StateT, evalState, evalStateT, get, lift, put)
 import Data.Identity (Identity)
-import Unbound.Name (Name(..))
+import Unbound.LocallyNameless.Name (Name(..))
 
 
 class Monad m <= Fresh m where

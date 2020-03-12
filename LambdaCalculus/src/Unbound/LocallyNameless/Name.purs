@@ -1,4 +1,4 @@
-module Unbound.Name where
+module Unbound.LocallyNameless.Name where
 
 import Prelude
 import Data.Tuple (Tuple(..))

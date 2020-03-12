@@ -1,11 +1,11 @@
-module Unbound.Rebind where
+module Unbound.LocallyNameless.Rebind where
 
 import Prelude
 import Data.Generic.Rep (class Generic, from)
 import Data.Monoid.Conj (Conj(..))
 import Data.Tuple (Tuple(..))
 import Effect.Exception.Unsafe (unsafeThrow)
-import Unbound.Alpha (class Alpha, class GenericAlpha, acompare', aeq', close, freshen', fvAny', gnamePatFind, gnthPatFind, incrLevelCtx, isPat, isTermCtx, lfreshen', open, swaps')
+import Unbound.LocallyNameless.Alpha (class Alpha, class GenericAlpha, acompare', aeq', close, freshen', fvAny', gnamePatFind, gnthPatFind, incrLevelCtx, isPat, isTermCtx, lfreshen', open, swaps')
 
 
 data Rebind p1 p2 = Rebind p1 p2
