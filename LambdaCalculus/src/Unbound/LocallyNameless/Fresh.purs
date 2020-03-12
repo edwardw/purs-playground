@@ -2,6 +2,7 @@ module Unbound.LocallyNameless.Fresh where
 
 import Prelude
 import Control.Monad.Cont (class MonadCont, callCC)
+import Control.Monad.Maybe.Trans (MaybeT)
 import Control.Monad.State (class MonadTrans, StateT, evalState, evalStateT, get, lift, put)
 import Data.Identity (Identity)
 import Unbound.LocallyNameless.Name (Name(..))
@@ -42,6 +43,9 @@ instance freshFreshMT :: Monad m => Fresh (FreshMT m) where
       put (n + 1)
       pure $ Fn s n
     Bn _ _ -> pure nm
+
+instance freshMaybeT :: Fresh m => Fresh (MaybeT m) where
+  fresh = lift <<< fresh
 
 
 runFreshMT :: forall m a. Functor m => FreshMT m a -> m a

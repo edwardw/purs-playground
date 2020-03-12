@@ -8,7 +8,7 @@ import Data.Generic.Rep (class Generic)
 import Data.Maybe (Maybe(..))
 import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, mkTyRep)
-import Unbound.LocallyNameless (class Alpha, class Subst, Bind, Embed(..), Name, Rec, Shift(..), SubstName(..), bind_, embed, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSubst, genericSubsts, genericSwaps, rec, s2n)
+import Unbound.LocallyNameless (class Alpha, class Subst, Bind, Embed, Name, Rec, Shift(..), SubstName(..), bind_, embed, genericACompare, genericAeq, genericClose, genericFreshen, genericFvAny, genericIsPat, genericIsTerm, genericLFreshen, genericNamePatFind, genericNthPatFind, genericOpen, genericSubst, genericSubsts, genericSwaps, rec, s2n)
 
 
 type Var = Name Term
@@ -39,7 +39,7 @@ instance showDecl :: Show Decl where
                    <> show x
                    <> ", declClass = "
                    <> show a
-                   <> ", declVar = "
+                   <> ", declVal = "
                    <> show m
 
 instance typeableTerm :: Typeable Term where
@@ -106,7 +106,7 @@ letrec :: Decl -> Term -> Term
 letrec d e = LetRec $ bind_ (rec d) e
 
 decl :: Var -> Term -> Term -> Decl
-decl x klass e = Decl x (Shift (Embed klass)) (embed e)
+decl x klass e = Decl x (Shift (embed klass)) (embed e)
 
 m0 :: Term
 m0 = letrec (decl v Unit Unit) Unit
@@ -120,9 +120,9 @@ m2 = Pi (bind_ (Tuple v (embed Unit)) m1)
 
 -- ```
 -- > m1
--- LetRec (<[Decl {declVar = x, declClass = {{V x}}, declVar = {V 0@0}]> V 0@0)
+-- LetRec (<[Decl {declVar = x, declClass = {{V x}}, declVal = {V 0@0}]> V 0@0)
 -- > subst v Unit m1
--- LetRec (<[Decl {declVar = x, declClass = {{Unit}}, declVar = {V 0@0}]> V 0@0)
+-- LetRec (<[Decl {declVar = x, declClass = {{Unit}}, declVal = {V 0@0}]> V 0@0)
 -- > m2
--- Pi (<(Tuple x {Unit})> LetRec (<[Decl {declVar = x, declClass = {{V 0@0}}, declVar = {V 0@0}]> V 0@0))
+-- Pi (<(Tuple x {Unit})> LetRec (<[Decl {declVar = x, declClass = {{V 0@0}}, declVal = {V 0@0}]> V 0@0))
 -- ```
