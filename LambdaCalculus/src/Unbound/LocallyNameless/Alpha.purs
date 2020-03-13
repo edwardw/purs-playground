@@ -66,8 +66,10 @@ isZeroLevelCtx (AlphaCtx ctx) = ctx.level == 0
 -- | instance of `Data.Generic.Rep.Generic`. E.g., the `Alpha` instance for
 -- | `TRec`.
 class Show a <= Alpha a where
+  -- | See `Unbound.LocallyNameless.Operations.aeq`.
   aeq' :: AlphaCtx -> a -> a -> Boolean
 
+  -- | See `Unbound.LocallyNameless.Operations.fvAny`.
   fvAny' :: forall f
           . Contravariant f
          => Applicative f
@@ -103,6 +105,7 @@ class Show a <= Alpha a where
   -- | Apply the given permutation of variable names to the given pattern.
   swaps' :: AlphaCtx -> Perm AnyName -> a -> a
 
+  -- | See `Unbound.LocallyNameless.Operations.lfreshen`.
   lfreshen' :: forall m b
              . LFresh m
             => AlphaCtx
@@ -110,6 +113,7 @@ class Show a <= Alpha a where
             -> (a -> Perm AnyName -> m b)
             -> m b
 
+  -- | See `Unbound.LocallyNameless.Operations.freshen`.
   -- | Rename the free variables in the given term to be distinct from all other
   -- | names seen in the monad `m`.
   freshen' :: forall m. Fresh m => AlphaCtx -> a -> m (Tuple a (Perm AnyName))

@@ -10,6 +10,12 @@ import Effect.Exception.Unsafe (unsafeThrow)
 import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, fvAny', isTerm, isTermCtx, open, swaps', termCtx)
 
 
+-- | `Embed` allows for terms to be embedded` within patterns. Such embedded
+-- | terms do not bind names along with the rest of the pattern.
+-- |
+-- | `Embed` involves no binding, and hence it is safe to manipulate directly.
+-- | To create and destruct `Embed` terms, you may use the `Embed` constructor
+-- | directly.
 newtype Embed t = Embed t
 
 derive instance eqEmbed :: Eq t => Eq (Embed t)
@@ -34,12 +40,12 @@ instance alphaEmbed :: Alpha t => Alpha (Embed t) where
 
   freshen' ctx p =
     if isTermCtx ctx
-    then unsafeThrow "freshen' called on a term"
+    then unsafeThrow "freshen' called on Embed in Term mode"
     else pure $ Tuple p mempty
 
   lfreshen' ctx p cont =
     if isTermCtx ctx
-    then unsafeThrow "lfreshen' called on a term"
+    then unsafeThrow "lfreshen' called on Embed in Term mode"
     else cont p mempty
 
   aeq' ctx (Embed x) (Embed y) = aeq' (termCtx ctx) x y
@@ -51,12 +57,12 @@ instance alphaEmbed :: Alpha t => Alpha (Embed t) where
 
   close ctx b (Embed x) =
     if isTermCtx ctx
-    then unsafeThrow "close on Embed"
+    then unsafeThrow "close called on Embed in Term mode"
     else Embed $ close (termCtx ctx) b x
 
   open ctx b (Embed x) =
     if isTermCtx ctx
-    then unsafeThrow "close on Embed"
+    then unsafeThrow "open called on Embed in Term mode"
     else Embed $ open (termCtx ctx) b x
 
   nthPatFind _ = mempty
