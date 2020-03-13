@@ -12,10 +12,11 @@ import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, typeOf)
 import Partial.Unsafe (unsafePartial)
 import Type.Proxy (Proxy(..))
-import Unbound.LocallyNameless.Alpha (class Alpha, aeq', close, freshen', fvAny', initialCtx, namePatFind, nthPatFind, open, patternCtx)
+import Unbound.LocallyNameless.Alpha (class Alpha, aeq', close, freshen', fvAny', initialCtx, lfreshen', namePatFind, nthPatFind, open, patternCtx)
 import Unbound.LocallyNameless.Bind (Bind(..))
 import Unbound.LocallyNameless.Embed (Embed(..))
 import Unbound.LocallyNameless.Fresh (class Fresh)
+import Unbound.LocallyNameless.LFresh (class LFresh)
 import Unbound.LocallyNameless.Name (AnyName(..), Name)
 import Unbound.PermM (Perm)
 import Unsafe.Coerce (unsafeCoerce)
@@ -26,6 +27,9 @@ aeq = aeq' initialCtx
 freshen :: forall p m. Alpha p => Fresh m => p -> m (Tuple p (Perm AnyName))
 freshen = freshen' (patternCtx initialCtx)
 
+lfreshen :: forall p m b. Alpha p => LFresh m => p -> (p -> Perm AnyName -> m b) -> m b
+lfreshen = lfreshen' (patternCtx initialCtx)
+
 bind_ :: forall p t. Alpha p => Alpha t => p -> t -> Bind p t
 bind_ p t = B p (close initialCtx (namePatFind p) t)
 
@@ -33,6 +37,10 @@ unbind_ :: forall p t m. Alpha p => Alpha t => Fresh m => Bind p t -> m (Tuple p
 unbind_ (B p t) = do
   Tuple p' _ <- freshen p
   pure $ Tuple p' (open initialCtx (nthPatFind p') t)
+
+lunbind :: forall m p t c. LFresh m => Alpha p => Alpha t => Bind p t -> (Tuple p t -> m c) -> m c
+lunbind (B p t) cont =
+  lfreshen p $ \x _ -> cont $ Tuple x (open initialCtx (nthPatFind x) t)
 
 fvAny :: forall a f
        . Alpha a
