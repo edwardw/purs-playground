@@ -93,7 +93,7 @@ idT = lam "y" (var "y") :: Term
 foo = lam "z" (var "y") :: Term
 
 trueT  = lam "x" (lam "y" (var "x")) :: Term
-fasleT = lam "x" (lam "x" (var "x")) :: Term
+falseT = lam "x" (lam "x" (var "x")) :: Term
 
 
 parseTerm :: Parser String Term
