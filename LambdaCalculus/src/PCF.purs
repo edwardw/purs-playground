@@ -308,7 +308,7 @@ typeOf gamma term = foldl (flip substTy) ty <$> unify cs
 
 type Lets = Map String Term
 
--- The interesting this is, once we are certain a closed term is well-types,
+-- The interesting thing is, once we are certain a closed term is well-types,
 -- we can ignore the types and evaluate as we would in untyped lambda calculus.
 eval :: Lets -> Term -> Term
 eval env term = case term of

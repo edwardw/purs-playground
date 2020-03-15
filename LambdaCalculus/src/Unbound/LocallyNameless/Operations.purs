@@ -32,14 +32,14 @@ acompare :: forall a. Alpha a => a -> a -> Ordering
 acompare = acompare' initialCtx
 
 
--- | Returns a fold over any names in a term `a`.
+-- | Returns the free variables (of any sort) contained in a term `a`.
 fvAny :: forall a f
        . Alpha a => Contravariant f => Applicative f
       => (AnyName -> f AnyName) -> a -> f a
 fvAny = fvAny' initialCtx
 
 
--- | Returns the free `b` variables of a term `a`.
+-- | Returns the free variables of sort `b` contained in a term `a`.
 fv :: forall a f b
     . Alpha a => Typeable b => Contravariant f => Applicative f
    => (Name b -> f (Name b)) -> a -> f a

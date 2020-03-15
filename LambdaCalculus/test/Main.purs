@@ -4,6 +4,7 @@ import Prelude
 import Effect (Effect)
 import Test.LambdaCalculus (testLambdaCalculus)
 import Test.PCF (testPCF)
+import Test.PCFUnbound (testPCFUnbound)
 import Test.Unbound (testUnbound)
 import Test.UnionFind (testUnionFind)
 
@@ -13,3 +14,4 @@ main = do
   testPCF
   testUnionFind
   testUnbound
+  testPCFUnbound
