@@ -1,16 +1,15 @@
 module Unbound.LocallyNameless.Operations where
 
 import Prelude
-import Data.Array ((:))
+import Data.Array (catMaybes, (:))
 import Data.Const (Const(..))
-import Data.Functor.Contravariant (class Contravariant, cmap)
-import Data.Maybe (Maybe(..), fromJust)
+import Data.Functor.Contravariant (class Contravariant)
+import Data.Maybe (Maybe(..))
 import Data.Monoid.Endo (Endo(..))
 import Data.Set (Set)
 import Data.Set as S
 import Data.Tuple (Tuple(..))
 import Data.Typeable (class Typeable, typeOf)
-import Partial.Unsafe (unsafePartial)
 import Type.Proxy (Proxy(..))
 import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, freshen', fvAny', initialCtx, lfreshen', namePatFind, nthPatFind, open, patternCtx, swaps')
 import Unbound.LocallyNameless.Bind (Bind(..))
@@ -40,10 +39,8 @@ fvAny = fvAny' initialCtx
 
 
 -- | Returns the free variables of sort `b` contained in a term `a`.
-fv :: forall a f b
-    . Alpha a => Typeable b => Contravariant f => Applicative f
-   => (Name b -> f (Name b)) -> a -> f a
-fv = fvAny <<< justFiltered f
+fv :: forall a b. Alpha a => Typeable b => a -> Array (Name b)
+fv = catMaybes <<< map f <<< toArrayOf fvAny
   where
   f :: AnyName -> Maybe (Name b)
   f (AnyName (Tuple t v)) =
@@ -54,7 +51,7 @@ fv = fvAny <<< justFiltered f
 
 -- | Returns the set of free `b` variables of a term `a`.
 fvSet :: forall a b. Alpha a => Typeable b => a -> Set (Name b)
-fvSet = S.fromFoldable <<< toArrayOf fv
+fvSet = S.fromFoldable <<< fv
 
 
 -- | Freshen a pattern by replacing all old binding names with new fresh
@@ -133,9 +130,3 @@ foldrOf l f z = map (flip appEndo z) (foldMapOf l (Endo <<< f))
 
 foldMapOf :: forall r s a. Getting r s a -> (a -> r) -> s -> r
 foldMapOf l f = getConst <<< l (Const <<< f)
-
-justFiltered :: forall a b. (a -> Maybe b) -> Fold a b
-justFiltered p bfb x =
-  case p x of
-    Just b  -> cmap (unsafePartial (fromJust <<< p)) (bfb b)
-    Nothing -> pure x
