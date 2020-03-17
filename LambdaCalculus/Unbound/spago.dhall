@@ -8,9 +8,12 @@ You can edit this file as you like.
   , "console"
   , "effect"
   , "leibniz"
+  , "nonempty"
   , "parsing"
   , "profunctor"
   , "psci-support"
+  , "quickcheck"
+  , "strings"
   , "test-unit"
   , "typelevel"
   ]

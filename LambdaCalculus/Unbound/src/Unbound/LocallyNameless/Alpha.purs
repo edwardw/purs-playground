@@ -17,41 +17,47 @@ import Effect.Exception.Unsafe (unsafeThrow)
 import Type.Proxy (Proxy(..))
 import Unbound.LocallyNameless.Fresh (class Fresh, fresh)
 import Unbound.LocallyNameless.LFresh (class LFresh, avoid, lfresh)
-import Unbound.LocallyNameless.Name (AnyName(..), Name(..), isFreeName, mkAnyName)
+import Unbound.LocallyNameless.Name (AnyName(..), Name(..), isFreeName, mkAnyName, toSortedName)
 import Unbound.PermM (Perm, single)
 import Unbound.PermM as PermM
 import Unsafe.Coerce (unsafeCoerce)
 
 
-data AlphaCtx = AlphaCtx { mode :: Mode, level :: Int }
 
-data Mode = Term | Pat
+--------------------------------------------------------------------------------
+-- Overview --------------------------------------------------------------------
+--------------------------------------------------------------------------------
 
-derive instance eqMode :: Eq Mode
-
-
-initialCtx :: AlphaCtx
-initialCtx = AlphaCtx { mode: Term, level: 0 }
-
-patternCtx :: AlphaCtx -> AlphaCtx
-patternCtx (AlphaCtx ctx) = AlphaCtx $ ctx { mode = Pat }
-
-termCtx :: AlphaCtx -> AlphaCtx
-termCtx (AlphaCtx ctx) = AlphaCtx $ ctx { mode = Term }
-
-isTermCtx :: AlphaCtx -> Boolean
-isTermCtx = case _ of
-  AlphaCtx { mode: Term } -> true
-  _                       -> false
-
-incrLevelCtx :: AlphaCtx -> AlphaCtx
-incrLevelCtx (AlphaCtx ctx) = AlphaCtx $ ctx { level = ctx.level + 1 }
-
-decrLevelCtx :: AlphaCtx -> AlphaCtx
-decrLevelCtx (AlphaCtx ctx) = AlphaCtx $ ctx { level = ctx.level - 1 }
-
-isZeroLevelCtx :: AlphaCtx -> Boolean
-isZeroLevelCtx (AlphaCtx ctx) = ctx.level == 0
+-- | We have two classes of types:
+-- |    Terms (which contains variables) and
+-- |    Patterns (which contains binders)
+-- |
+-- | Terms include
+-- |    Names
+-- |    Bind p t where p is a pattern and t is a term
+-- |    Standard type constructors (Unit, Tuple, etc.)
+-- |
+-- | Patterns include
+-- |    Names
+-- |    Embed t where t is a term
+-- |    Rebind p q where p and q are both patterns
+-- |    Rec p where p is a pattern
+-- |    Shift a where a is an Embed or some numbers of Shifts wrapped around Embed
+-- |    Standard type constructors
+-- |
+-- | Terms support a number of operations, including alpha-equivalence, free
+-- | variables, swapping, etc. Because patterns occur in terms, so they too
+-- | support the same operations, but only for the annotations inside them.
+-- |
+-- | Therefore, both Terms and Patterns are instances of the `Alpha` type class
+-- | which lists these operations. However, some types (such as Names) are both
+-- | Terms and Patterns, and the behavior of the operations is different when we
+-- | use Name as a term and as a pattern. We index the each of the operations
+-- | with a mode to tell the operation context.
+-- |
+-- | Patterns also support a few extra operations that Terms do not for dealing
+-- | with the binding variables. These are used to find the index of names
+-- | inside patterns.
 
 
 
@@ -161,6 +167,46 @@ instance semigroupNamePatFind :: Semigroup NamePatFind where
 
 instance monoidNamePatFind :: Monoid NamePatFind where
   mempty = NamePatFind { runNamePatFind: const $ Left 0 }
+
+
+
+--------------------------------------------------------------------------------
+-- AlphaCtx --------------------------------------------------------------------
+--------------------------------------------------------------------------------
+
+
+-- | An `AlphaCtx` records the current mode (Term/Pat) and current level, and
+-- | gets passed along during operations which need to keep track of the mode
+-- | and/or level.
+data AlphaCtx = AlphaCtx { mode :: Mode, level :: Int }
+
+data Mode = Term | Pat
+
+derive instance eqMode :: Eq Mode
+
+
+initialCtx :: AlphaCtx
+initialCtx = AlphaCtx { mode: Term, level: 0 }
+
+patternCtx :: AlphaCtx -> AlphaCtx
+patternCtx (AlphaCtx ctx) = AlphaCtx $ ctx { mode = Pat }
+
+termCtx :: AlphaCtx -> AlphaCtx
+termCtx (AlphaCtx ctx) = AlphaCtx $ ctx { mode = Term }
+
+isTermCtx :: AlphaCtx -> Boolean
+isTermCtx = case _ of
+  AlphaCtx { mode: Term } -> true
+  _                       -> false
+
+incrLevelCtx :: AlphaCtx -> AlphaCtx
+incrLevelCtx (AlphaCtx ctx) = AlphaCtx $ ctx { level = ctx.level + 1 }
+
+decrLevelCtx :: AlphaCtx -> AlphaCtx
+decrLevelCtx (AlphaCtx ctx) = AlphaCtx $ ctx { level = ctx.level - 1 }
+
+isZeroLevelCtx :: AlphaCtx -> Boolean
+isZeroLevelCtx (AlphaCtx ctx) = ctx.level == 0
 
 
 
@@ -632,9 +678,12 @@ instance alphaName :: Typeable a => Alpha (Name a) where
   nthPatFind nm = NthPatFind { runNthPatFind: \i ->
     if i == 0 then Right (mkAnyName nm) else Left $ i - 1 }
 
-  namePatFind nm1 = NamePatFind { runNamePatFind: \(AnyName (Tuple t v)) ->
-    let t1 = typeOf (Proxy :: Proxy (Name a))
-    in if t1 == t && nm1 == (unsafeCoerce v) then Right 0 else Left 1 }
+  namePatFind nm = NamePatFind
+    { runNamePatFind: \anynm ->
+      case toSortedName anynm of
+        Just v | v == nm -> Right 0
+        _                -> Left 1
+    }
 
   swaps' ctx perm nm =
     if isTermCtx ctx

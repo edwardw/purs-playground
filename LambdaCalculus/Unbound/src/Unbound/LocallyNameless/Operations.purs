@@ -4,21 +4,18 @@ import Prelude
 import Data.Array (catMaybes, (:))
 import Data.Const (Const(..))
 import Data.Functor.Contravariant (class Contravariant)
-import Data.Maybe (Maybe(..))
 import Data.Monoid.Endo (Endo(..))
 import Data.Set (Set)
 import Data.Set as S
 import Data.Tuple (Tuple(..))
-import Data.Typeable (class Typeable, typeOf)
-import Type.Proxy (Proxy(..))
+import Data.Typeable (class Typeable)
 import Unbound.LocallyNameless.Alpha (class Alpha, acompare', aeq', close, freshen', fvAny', initialCtx, lfreshen', namePatFind, nthPatFind, open, patternCtx, swaps')
 import Unbound.LocallyNameless.Bind (Bind(..))
 import Unbound.LocallyNameless.Embed (Embed(..))
 import Unbound.LocallyNameless.Fresh (class Fresh)
 import Unbound.LocallyNameless.LFresh (class LFresh)
-import Unbound.LocallyNameless.Name (AnyName(..), Name)
+import Unbound.LocallyNameless.Name (AnyName, Name, toSortedName)
 import Unbound.PermM (Perm)
-import Unsafe.Coerce (unsafeCoerce)
 
 
 -- | `aeq t1 t2` returns true iff `t1` and `t2` are alpha-equivalent terms.
@@ -40,13 +37,7 @@ fvAny = fvAny' initialCtx
 
 -- | Returns the free variables of sort `b` contained in a term `a`.
 fv :: forall a b. Alpha a => Typeable b => a -> Array (Name b)
-fv = catMaybes <<< map f <<< toArrayOf fvAny
-  where
-  f :: AnyName -> Maybe (Name b)
-  f (AnyName (Tuple t v)) =
-    if t == typeOf (Proxy :: Proxy (Name b))
-    then Just $ unsafeCoerce v
-    else Nothing
+fv = catMaybes <<< map toSortedName <<< toArrayOf fvAny
 
 
 -- | Returns the set of free `b` variables of a term `a`.
