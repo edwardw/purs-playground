@@ -101,7 +101,13 @@ instance arbT :: Arbitrary a => Arbitrary (T a) where
 
 
 -- picks out one of the free variables of a tree and run test against it
-arbVarsOf :: forall a. Typeable a => Alpha a => T a -> ((Name (T a)) -> Result) -> Gen Result
+arbVarsOf
+  :: forall a
+   . Typeable a
+  => Alpha a
+  => T a
+  -> ((Name (T a)) -> Result)
+  -> Gen Result
 arbVarsOf t f = case uncons (fv t) of
   Just { head, tail } -> do
     v <- elements (head :| tail)
@@ -111,7 +117,7 @@ arbVarsOf t f = case uncons (fv t) of
 
 -- manual implementation of fv
 fvSpec :: forall a. T a -> Array (Name (T a))
-fvSpec t = case t of
+fvSpec = case _ of
   Leaf _  -> mempty
   V v     -> [v]
   B t1 t2 -> fvSpec t1 <> fvSpec t2
@@ -143,14 +149,15 @@ propCloseBinds :: T Int -> Gen Result
 propCloseBinds t =
   arbVarsOf t $ \v -> v `testNotFreeIn` close initialCtx (namePatFind v) t
 
+
 testOpenClose :: Effect Unit
 testOpenClose = runTest do
   suite "Property of open/close" do
     test "alpha-equivalent is reflective" do
       quickCheck propRefl
-    test "fv" do
+    test "generic fv is sane" do
       quickCheck propfvSpec
-    test "open an free variable is idempotent" do
+    test "opening an free variable is idempotent" do
       quickCheck propOpenIdempotent
     test "close means close" do
       quickCheck propCloseBinds
