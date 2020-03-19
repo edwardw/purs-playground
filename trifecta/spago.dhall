@@ -8,8 +8,11 @@ You can edit this file as you like.
   , "effect"
   , "exceptions"
   , "foldable-traversable"
+  , "generics-rep"
+  , "lists"
   , "psci-support"
   , "sequences"
+  , "test-unit"
   ]
 , packages = ./packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
