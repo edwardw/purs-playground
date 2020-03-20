@@ -1,4 +1,48 @@
-module Data.Text.Prettyprint.Doc.Internal where
+module Data.Text.Prettyprint.Doc.Internal
+  ( Doc(..)
+
+  , class Pretty, pretty, prettyArray
+  , viaShow, unsafeViaShow, unsafeTextWithoutNewlines
+  , emptyDoc, nest, line, line', softline, softline', hardline
+
+  , group, flatAlt
+
+  , align, hang, indent, encloseSep, array, tupled
+
+  , concatDoc, (<+>)
+
+  , concatWith
+
+  , hsep, vsep, fillSep, sep
+  , hcat, vcat, fillCat, cat
+  , punctuate
+
+  , column, nesting, width, pageWidth
+
+  , fill, fillBreak
+
+  , plural, enclose, surround
+
+  , annotate
+  , unAnnotate
+  , reAnnotate
+  , alterAnnotations
+  , unAnnotateS
+  , reAnnotateS
+  , alterAnnotationsS
+
+  , fuse, FusionDepth(..)
+
+  , SimpleDocStream(..)
+  , PageWidth(..), defaultPageWidth
+  , LayoutOptions(..), defaultLayoutOptions
+  , layoutPretty, layoutCompact, layoutSmart
+  , removeTrailingWhitespace
+
+  , renderShowS
+
+  , textSpaces
+  ) where
 
 import Prelude
 import Data.Array ((:))
@@ -9,11 +53,10 @@ import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show (genericShow)
 import Data.Identity (Identity(..))
 import Data.Int as I
-import Data.List.Lazy as LL
 import Data.Maybe (Maybe(..), maybe)
 import Data.NonEmpty (NonEmpty)
+import Data.String (CodePoint, codePointFromChar, fromCodePointArray, toCodePointArray)
 import Data.String as S
-import Data.String.CodeUnits as SCU
 import Data.Text.Prettyprint.Doc.Render.Util.Panic (panicPeekedEmpty, panicUncaughtFail)
 import Data.Traversable (class Traversable, foldlDefault, foldr, foldrDefault, sequenceDefault)
 import Data.Tuple (Tuple(..))
@@ -30,7 +73,7 @@ data Doc ann
   | Empty
 
   -- | invariant: not '\n'
-  | Char Char
+  | Char CodePoint
 
   | Text Int String
 
@@ -108,9 +151,9 @@ instance prettyBoolean :: Pretty Boolean where
 
 instance prettyChar :: Pretty Char where
   pretty '\n' = line
-  pretty c = Char c
+  pretty c = Char (codePointFromChar c)
 
-  prettyArray = pretty <<< SCU.fromCharArray
+  prettyArray = pretty <<< fromCodePointArray <<< map codePointFromChar
 
 
 -- | Convenience function to convert a `Show`able value to a `Doc`. If the
@@ -136,7 +179,7 @@ instance prettyString :: Pretty String where
 -- | The string must not contain any newline characters, since this is an
 -- | invariant of the 'Text' constructor.
 unsafeTextWithoutNewlines :: forall ann. String -> Doc ann
-unsafeTextWithoutNewlines text = case SCU.uncons text of
+unsafeTextWithoutNewlines text = case S.uncons text of
   Nothing -> Empty
   Just { head, tail }
     | S.null tail -> Char head
@@ -173,7 +216,7 @@ nest i x = Nest i x
 
 
 line :: forall ann. Doc ann
-line = FlatAlt Line (Char ' ')
+line = FlatAlt Line (Char (codePointFromChar ' '))
 
 
 line' :: forall ann. Doc ann
@@ -181,7 +224,7 @@ line' = FlatAlt Line mempty
 
 
 softline :: forall ann. Doc ann
-softline = Union (Char ' ') Line
+softline = Union (Char (codePointFromChar ' ')) Line
 
 
 softline' :: forall ann. Doc ann
@@ -239,8 +282,30 @@ fillBreak f x = width x (\w ->
 spaces :: forall ann. Int -> Doc ann
 spaces n
   | n <= 0    = Empty
-  | n == 1    = Char ' '
+  | n == 1    = Char (codePointFromChar ' ')
   | otherwise = Text n (textSpaces n)
+
+
+plural :: forall doc. doc -> doc -> Int -> doc
+plural one multiple n
+    | n == 1    = one
+    | otherwise = multiple
+
+
+enclose :: forall ann. Doc ann -> Doc ann -> Doc ann -> Doc ann
+enclose l r x = l <> x <> r
+
+
+surround :: forall ann. Doc ann -> Doc ann -> Doc ann -> Doc ann
+surround x l r = l <> x <> r
+
+
+annotate :: forall ann. ann -> Doc ann -> Doc ann
+annotate = Annotated
+
+
+unAnnotate :: forall ann ann'. Doc ann -> Doc ann'
+unAnnotate = alterAnnotations (const [])
 
 
 reAnnotate :: forall ann ann'. (ann -> ann') -> Doc ann -> Doc ann'
@@ -398,8 +463,8 @@ encloseSep :: forall ann. Doc ann -> Doc ann -> Doc ann -> Array (Doc ann) -> Do
 encloseSep l r s ds = case ds of
   []  -> l <> r
   [d] -> l <> d <> r
-  _   -> let lst = (LL.zipWith (<>) (l LL.: LL.repeat s) (LL.fromFoldable ds))
-         in cat (A.fromFoldable lst) <> r
+  _   -> let n = A.length ds - 1
+         in cat (A.zipWith (<>) (l : (A.replicate n s)) ds) <> r
 
 
 array :: forall ann. Array (Doc ann) -> Doc ann
@@ -416,7 +481,7 @@ tupled = group <<< encloseSep (flatAlt (pretty "( ") (pretty "("))
 
 
 concatDoc :: forall ann. Doc ann -> Doc ann -> Doc ann
-concatDoc x y = x <> Char ' ' <> y
+concatDoc x y = x <> Char (codePointFromChar ' ') <> y
 
 infix 6 concatDoc as <+>
 
@@ -461,6 +526,16 @@ cat :: forall ann. Array (Doc ann) -> Doc ann
 cat = group <<< vcat
 
 
+punctuate :: forall ann. Doc ann -> Array (Doc ann) -> Array (Doc ann)
+punctuate p = go
+  where
+    go ds = case A.uncons ds of
+      Nothing         ->  []
+      Just { head, tail }
+        | A.null tail -> [head]
+        | otherwise   -> (head <> p) : go tail
+
+
 data FusionDepth
   = Shallow
   | Deep
@@ -479,9 +554,9 @@ fuse depth = go
   go = case _ of
     Cat Empty x                   -> go x
     Cat x Empty                   -> go x
-    Cat (Char c1) (Char c2)       -> Text 2 (SCU.singleton c1 <> SCU.singleton c2)
-    Cat (Text lt t) (Char c)      -> Text (lt + 1) (t <> SCU.singleton c)
-    Cat (Char c) (Text lt t)      -> Text (1 + lt) (SCU.singleton c <> t)
+    Cat (Char c1) (Char c2)       -> Text 2 (S.singleton c1 <> S.singleton c2)
+    Cat (Text lt t) (Char c)      -> Text (lt + 1) (t <> S.singleton c)
+    Cat (Char c) (Text lt t)      -> Text (1 + lt) (S.singleton c <> t)
     Cat (Text l1 t1) (Text l2 t2) -> Text (l1 + l2) (t1 <> t2)
 
     Cat x@(Char _) (Cat y@(Char _) z)     -> go (Cat (go (Cat x y)) z)
@@ -531,7 +606,7 @@ fuse depth = go
 data SimpleDocStream ann
   = SFail
   | SEmpty
-  | SChar Char (SimpleDocStream ann)
+  | SChar CodePoint (SimpleDocStream ann)
 
   | SText Int String (SimpleDocStream ann)
 
@@ -560,7 +635,7 @@ removeTrailingWhitespace = go (RecordedWhitespace [] 0)
   commitWhitespace is n sds = case A.uncons is of
     Nothing -> case n of
                   0 -> sds
-                  1 -> SChar ' ' sds
+                  1 -> SChar (codePointFromChar ' ') sds
                   _ -> SText n (textSpaces n) sds
     Just { head, tail } -> let end = SLine (head + n) sds
                           in prependEmptyLines tail end
@@ -586,17 +661,18 @@ removeTrailingWhitespace = go (RecordedWhitespace [] 0)
     SFail -> SFail
     SEmpty -> prependEmptyLines withheldLines SEmpty
     SChar c rest
-      | c == ' '  -> go (RecordedWhitespace withheldLines (withheldSpaces + 1)) rest
+      | c == codePointFromChar ' '
+                  -> go (RecordedWhitespace withheldLines (withheldSpaces + 1)) rest
       | otherwise -> commitWhitespace
                         withheldLines
                         withheldSpaces
                         (SChar c (go (RecordedWhitespace [] 0) rest))
     SText l text rest ->
-      let stripped = SCU.toCharArray text
+      let stripped = toCodePointArray text
                         # A.reverse
-                        # A.dropWhile (_ == ' ')
+                        # A.dropWhile (_ == codePointFromChar ' ')
                         # A.reverse
-                        # SCU.fromCharArray
+                        # fromCodePointArray
           strippedLength = S.length stripped
           trailingLength = l - strippedLength
           isOnlySpace = strippedLength == 0
@@ -830,6 +906,27 @@ layoutWadlerLeijen (FittingPredicate fits) pageWidth_ doc =
     Annotated ann x -> SAnnPush ann (best nl cc (Cons i x (UndoAnn ds)))
 
 
+layoutCompact :: forall ann. Doc ann -> SimpleDocStream ann
+layoutCompact doc = scan 0 [doc]
+  where
+  scan col ds = case A.uncons ds of
+    Nothing             -> SEmpty
+    Just { head, tail } -> case head of
+      Fail            -> SFail
+      Empty           -> scan col tail
+      Char c          -> SChar c (scan (col + 1) tail)
+      Text l t        -> let col' = col + l in SText l t (scan col' tail)
+      FlatAlt x _     -> scan col (x : tail)
+      Line            -> SLine 0 (scan 0 tail)
+      Cat x y         -> scan col (x : y : tail)
+      Nest _ x        -> scan col (x : tail)
+      Union _ y       -> scan col (y : tail)
+      Column f        -> scan col (f col : tail)
+      WithPageWidth f -> scan col (f Unbounded : tail)
+      Nesting f       -> scan col (f 0 : tail)
+      Annotated _ x   -> scan col (x : tail)
+
+
 instance showDoc :: Show (Doc ann) where
   show doc = renderShowS (layoutPretty defaultLayoutOptions doc)
 
@@ -840,10 +937,11 @@ renderShowS = case _ of
   SEmpty       -> ""
   SChar c x    -> show c <> renderShowS x
   SText _l t x -> t <> renderShowS x
-  SLine i x    -> SCU.fromCharArray ('\n' : A.replicate i ' ') <> renderShowS x
+  SLine i x    -> fromCodePointArray ((codePointFromChar '\n') : A.replicate i (codePointFromChar ' '))
+                  <> renderShowS x
   SAnnPush _ x -> renderShowS x
   SAnnPop x    -> renderShowS x
 
 
 textSpaces :: Int -> String
-textSpaces n = SCU.fromCharArray (A.replicate n ' ')
+textSpaces n = fromCodePointArray (A.replicate n (codePointFromChar ' '))
