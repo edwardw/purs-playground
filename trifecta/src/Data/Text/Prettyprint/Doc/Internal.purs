@@ -53,6 +53,7 @@ import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show (genericShow)
 import Data.Identity (Identity(..))
 import Data.Int as I
+import Data.Lazy (force)
 import Data.Maybe (Maybe(..), maybe)
 import Data.NonEmpty (NonEmpty)
 import Data.String (CodePoint, codePointFromChar, fromCodePointArray, toCodePointArray)
@@ -130,7 +131,7 @@ instance prettyIdentity :: Pretty a => Pretty (Identity a) where
 
 instance prettyArr :: Pretty a => Pretty (Array a) where
   pretty = prettyArray
-  prettyArray = align <<< array <<< map pretty
+  prettyArray xs = align <<< array $ map pretty xs
 
 
 instance prettyNonEmpty :: (Foldable f, Pretty a) => Pretty (NonEmpty f a) where
@@ -380,7 +381,7 @@ alterAnnotationsS re = go []
       Nothing   -> go (Remove : stack) rest
       Just ann' -> SAnnPush ann' (go (DontRemove : stack) rest)
     SAnnPop rest      -> case A.uncons stack of
-      Nothing                -> panicPeekedEmpty
+      Nothing                -> force panicPeekedEmpty
       Just { head, tail }
         | head == DontRemove -> SAnnPop (go tail rest)
         | otherwise          -> go tail rest
@@ -483,7 +484,7 @@ tupled = group <<< encloseSep (flatAlt (pretty "( ") (pretty "("))
 concatDoc :: forall ann. Doc ann -> Doc ann -> Doc ann
 concatDoc x y = x <> Char (codePointFromChar ' ') <> y
 
-infix 6 concatDoc as <+>
+infixr 6 concatDoc as <+>
 
 
 concatWith :: forall ann t. Foldable t => (Doc ann -> Doc ann -> Doc ann) -> t (Doc ann) -> Doc ann
@@ -933,7 +934,7 @@ instance showDoc :: Show (Doc ann) where
 
 renderShowS :: forall ann. SimpleDocStream ann -> String
 renderShowS = case _ of
-  SFail        -> panicUncaughtFail
+  SFail        -> force panicUncaughtFail
   SEmpty       -> ""
   SChar c x    -> show c <> renderShowS x
   SText _l t x -> t <> renderShowS x
