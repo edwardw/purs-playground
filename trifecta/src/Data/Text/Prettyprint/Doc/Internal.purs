@@ -45,10 +45,10 @@ module Data.Text.Prettyprint.Doc.Internal
   ) where
 
 import Prelude
-import Data.Array ((:))
+import Data.Array (catMaybes, (:))
 import Data.Array as A
 import Data.Const (Const(..))
-import Data.Foldable (class Foldable, null)
+import Data.Foldable (class Foldable, foldlDefault, foldl, foldr, foldrDefault, null)
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show (genericShow)
 import Data.Identity (Identity(..))
@@ -59,7 +59,7 @@ import Data.NonEmpty (NonEmpty)
 import Data.String (CodePoint, codePointFromChar, fromCodePointArray, toCodePointArray)
 import Data.String as S
 import Data.Text.Prettyprint.Doc.Render.Util.Panic (panicPeekedEmpty, panicUncaughtFail)
-import Data.Traversable (class Traversable, foldlDefault, foldr, foldrDefault, sequenceDefault)
+import Data.Traversable (class Traversable, sequenceDefault)
 import Data.Tuple (Tuple(..))
 import Effect.Exception.Unsafe (unsafeThrow)
 
@@ -204,7 +204,7 @@ instance prettyTuple :: (Pretty a, Pretty b) => Pretty (Tuple a b) where
 
 instance prettyMaybe :: Pretty a => Pretty (Maybe a) where
   pretty = maybe mempty pretty
-  prettyArray xs = align <<< array $ map pretty xs
+  prettyArray = prettyArray <<< catMaybes
 
 
 emptyDoc :: forall ann. Doc ann
@@ -491,7 +491,7 @@ concatWith :: forall ann t. Foldable t => (Doc ann -> Doc ann -> Doc ann) -> t (
 concatWith f ds
   | null ds   = mempty
   | otherwise = case A.uncons (A.fromFoldable ds) of
-    Just { head, tail } -> foldr f head tail
+    Just { head, tail } -> foldl f head tail
     Nothing             -> unsafeThrow "unreachable - concatWith"
 
 
@@ -936,7 +936,7 @@ renderShowS :: forall ann. SimpleDocStream ann -> String
 renderShowS = case _ of
   SFail        -> force panicUncaughtFail
   SEmpty       -> ""
-  SChar c x    -> show c <> renderShowS x
+  SChar c x    -> S.singleton c <> renderShowS x
   SText _l t x -> t <> renderShowS x
   SLine i x    -> fromCodePointArray ((codePointFromChar '\n') : A.replicate i (codePointFromChar ' '))
                   <> renderShowS x
