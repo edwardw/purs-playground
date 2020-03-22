@@ -7,6 +7,8 @@ You can edit this file as you like.
   [ "Unbound"
   , "console"
   , "effect"
+  , "fixed-points"
+  , "free"
   , "node-readline"
   , "psci-support"
   , "run"
