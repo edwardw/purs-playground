@@ -4,18 +4,17 @@ module CofreeTree where
 
 import Prelude
 import Control.Apply (lift2)
-import Control.Comonad
-import Control.Comonad.Cofree
-import Control.Lazy (fix)
-import Control.Monad.State
+import Control.Comonad (extend)
+import Control.Comonad.Cofree (Cofree, head, tail, (:<))
+import Control.Monad.State (State, evalState, get, modify_)
 import Data.Eq (class Eq1)
 import Data.Foldable (class Foldable, foldl, foldlDefault, foldrDefault)
-import Data.Functor.Mu
-import Data.Lazy (defer, force)
+import Data.Functor.Mu (Mu(..))
 import Data.Map (Map)
 import Data.Map as M
-import Data.Maybe
+import Data.Maybe (Maybe(..), maybe, maybe')
 import Data.Ord (class Ord1)
+import Data.TacitString as TS
 import Data.Traversable (class Traversable, sequence, sequenceDefault)
 import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
@@ -229,22 +228,22 @@ example =
 
 main :: Effect Unit
 main = do
-  log $ showCofreeAST (cofreeMu example)
-  log $ showCofreeAST (attribute (cofreeMu example))
+  log $ showCofree (cofreeMu example)
+  log $ showCofree (attribute (cofreeMu example))
   log $ case typeTree (cofreeMu example) of
-    Just ast -> "Just " <> showCofreeAST ast
+    Just ast -> "Just " <> showCofree ast
     Nothing  -> "Nothing"
   where
-  showCofreeAST :: forall m a. Show a => Cofree AST a -> String
-  showCofreeAST c =
+  showCofree
+    :: forall f a
+     . Show (f TS.TacitString)
+    => Functor f
+    => Show a
+    => Cofree f a
+    -> String
+  showCofree c =
     "("
     <> show (head c)
     <> " :< "
-    <> (case tail c of
-          ALambda s x -> "ALambda " <> s <> " " <> showCofreeAST x
-          AApply x y  -> "AApply " <> showCofreeAST x <> " " <> showCofreeAST y
-          ANumber i   -> "ANumber " <> show i
-          AString s   -> "AString " <> s
-          AIdent s    -> "AIdent " <> s
-       )
+    <> show ((tail c) <#> (showCofree >>> TS.hush))
     <> ")"
