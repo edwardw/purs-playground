@@ -1,6 +1,5 @@
 module Data.Text.Prettyprint.Doc.Internal
-  (
-    -- | Documents
+  ( -- | Documents
     Doc(..)
 
     -- | Basic functionality
