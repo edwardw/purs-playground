@@ -16,6 +16,6 @@ You can edit this file as you like.
     , "test-unit"
     , "typelevel"
     ]
-, packages = ./packages.dhall
+, packages = ../packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
 }
