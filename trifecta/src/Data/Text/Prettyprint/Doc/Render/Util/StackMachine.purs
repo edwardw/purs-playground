@@ -5,10 +5,10 @@ import Control.Apply (lift2)
 import Data.Array ((:))
 import Data.Array as A
 import Data.Lazy (force)
-import Data.Maybe
+import Data.Maybe (Maybe(..))
 import Data.String as S
-import Data.Text.Prettyprint.Doc.Internal
-import Data.Text.Prettyprint.Doc.Render.Util.Panic
+import Data.Text.Prettyprint.Doc.Internal (SimpleDocStream(..), textSpaces)
+import Data.Text.Prettyprint.Doc.Render.Util.Panic (panicInputNotFullyConsumed, panicUncaughtFail, panicUnpairedPop)
 
 
 
