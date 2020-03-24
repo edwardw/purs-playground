@@ -17,8 +17,8 @@ import Data.Text.Prettyprint.Doc.Render.Util.StackMachine (renderSimplyDecorated
 import Data.Tuple (Tuple(..))
 import Effect (Effect)
 import Test.QuickCheck (Result, (<?>))
-import Test.QuickCheck.Arbitrary (class Arbitrary, class Coarbitrary, arbitrary, coarbitrary)
-import Test.QuickCheck.Gen (Gen, arrayOf, frequency, oneOf, perturbGen)
+import Test.QuickCheck.Arbitrary (class Arbitrary, arbitrary)
+import Test.QuickCheck.Gen (Gen, arrayOf, frequency, oneOf)
 import Test.Unit (Test, suite, test, timeout)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
@@ -193,27 +193,6 @@ instance arbLO :: Arbitrary LO where
     where
     options = (AvailablePerLine <$> arbitrary <*> arbitrary)
            :| [pure Unbounded]
-
-
-newtype SDS ann = SDS (SimpleDocStream ann)
-
-instance coarbSDS :: Coarbitrary (SDS ann) where
-  coarbitrary = case _ of
-    SDS SFail             -> perturbGen 0.0
-    SDS SEmpty            -> perturbGen 1.0
-    SDS (SChar _ rest)    -> perturbGen 2.0 <<< coarbitrary (SDS rest)
-    SDS (SText l _ rest)  -> perturbGen 3.0 <<< coarbitrary (Tuple l (SDS rest))
-    SDS (SLine i rest)    -> perturbGen 4.0 <<< coarbitrary (Tuple i (SDS rest))
-    SDS (SAnnPush _ rest) -> perturbGen 5.0 <<< coarbitrary (SDS rest)
-    SDS (SAnnPop rest)    -> perturbGen 6.0 <<< coarbitrary (SDS rest)
-
-
-newtype PW = PW PageWidth
-
-instance coarbPW :: Coarbitrary PW where
-  coarbitrary = case _ of
-    PW (AvailablePerLine a b) -> perturbGen 0.0 <<< coarbitrary (Tuple a b)
-    PW Unbounded              -> perturbGen 1.0
 
 
 fusionDoesNotChangeRendering :: FusionDepth -> D Int -> Layouter Int -> Result
