@@ -4,6 +4,7 @@ import Prelude
 import Effect (Effect)
 import Test.Doc (testDoc)
 import Test.InternalDoctest (testInternalDoctest)
+import Test.Terminal (testTerminal)
 import Test.Rope (testRope)
 
 
@@ -12,3 +13,4 @@ main = do
   testRope
   testInternalDoctest
   testDoc
+  testTerminal

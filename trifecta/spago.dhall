@@ -4,16 +4,20 @@ You can edit this file as you like.
 -}
 { name = "my-project"
 , dependencies =
-  [ "console"
+  [ "ansi"
+  , "console"
   , "const"
   , "effect"
   , "exceptions"
   , "foldable-traversable"
   , "generics-rep"
   , "lists"
+  , "node-process"
   , "proxy"
   , "psci-support"
+  , "refs"
   , "sequences"
+  , "st"
   , "test-unit"
   ]
 , packages = ../packages.dhall
