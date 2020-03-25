@@ -15,6 +15,7 @@ You can edit this file as you like.
   , "quickcheck"
   , "strings"
   , "test-unit"
+  , "typeable"
   , "typelevel"
   ]
 , packages = ../packages.dhall

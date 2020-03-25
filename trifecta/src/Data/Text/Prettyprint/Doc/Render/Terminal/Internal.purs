@@ -72,7 +72,7 @@ render sdoc = ST.run do
   styleStackRef <- STRef.new [mempty]
   outputRef <- STRef.new mempty
 
-  let push x = STRef.modify (x : _) styleStackRef
+  let push x = STRef.modify (x : _) styleStackRef $> unit
 
       unsafePeek = STRef.read styleStackRef >>= \tok -> case A.uncons tok of
         Nothing -> force panicPeekedEmpty
@@ -82,30 +82,30 @@ render sdoc = ST.run do
         Nothing -> force panicPeekedEmpty
         Just { head: x, tail: xs } -> STRef.write xs styleStackRef *> pure x
 
-      writeOutput x = STRef.modify (_ <> x) outputRef
+      writeOutput x = STRef.modify (_ <> x) outputRef $> unit
 
-  let go = case _ of
+      go = case _ of
             SFail -> force panicUncaughtFail
             SEmpty -> pure unit
             SChar c rest -> do
-              _ <- writeOutput $ S.singleton c
+              writeOutput $ S.singleton c
               go rest
             SText _ t rest -> do
-              _ <- writeOutput t
+              writeOutput t
               go rest
             SLine i rest -> do
-              _ <- writeOutput $ "\n" <> fromCodePointArray (A.replicate i (codePointFromChar ' '))
+              writeOutput $ "\n" <> fromCodePointArray (A.replicate i (codePointFromChar ' '))
               go rest
             SAnnPush style rest -> do
               currentStyle <- unsafePeek
               let newStyle = style <> currentStyle
-              _ <- push newStyle
-              _ <- writeOutput $ styleToRawText newStyle
+              push newStyle
+              writeOutput $ styleToRawText newStyle
               go rest
             SAnnPop rest -> do
               _ <- unsafePop
               newStyle <- unsafePeek
-              _ <- writeOutput $ styleToRawText newStyle
+              writeOutput $ styleToRawText newStyle
               go rest
 
   go sdoc
@@ -119,7 +119,7 @@ renderIO :: SimpleDocStream AnsiStyle -> Effect Unit
 renderIO sdoc = do
   styleStackRef <- Ref.new [mempty]
 
-  let push x = Ref.modify (x : _) styleStackRef
+  let push x = Ref.modify (x : _) styleStackRef $> unit
 
       unsafePeek = Ref.read styleStackRef >>= \tok -> case A.uncons tok of
         Nothing -> force panicPeekedEmpty
@@ -131,7 +131,7 @@ renderIO sdoc = do
 
       putStr s = writeString stdout UTF8 s (uncork stdout) $> unit
 
-  let go = case _ of
+      go = case _ of
             SFail -> force panicUncaughtFail
             SEmpty -> pure unit
             SChar c rest -> do
@@ -146,7 +146,7 @@ renderIO sdoc = do
             SAnnPush style rest -> do
               currentStyle <- unsafePeek
               let newStyle = style <> currentStyle
-              _ <- push newStyle
+              push newStyle
               putStr $ styleToRawText newStyle
               go rest
             SAnnPop rest -> do

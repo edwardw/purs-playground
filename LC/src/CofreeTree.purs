@@ -15,6 +15,8 @@ import Data.Map as M
 import Data.Maybe (Maybe(..), maybe, maybe')
 import Data.Ord (class Ord1)
 import Data.TacitString as TS
+import Data.Text.Prettyprint.Doc (defaultLayoutOptions, hardline, indent, layoutPretty, pretty, vsep, (<+>))
+import Data.Text.Prettyprint.Doc.Render.Text (render)
 import Data.Traversable (class Traversable, sequence, sequenceDefault)
 import Data.Tuple (Tuple(..), fst)
 import Effect (Effect)
@@ -39,11 +41,15 @@ derive instance functorAST :: Functor AST
 
 instance showAST :: Show a => Show (AST a) where
   show = case _ of
-    ALambda s x -> "ALambda " <> s <> " " <> show x
-    AApply x y  -> "AApply " <> show x <> " " <> show y
+    ALambda s x -> renderDoc (pretty "ALambda" <+> pretty s <+> hardline <+> indent 2 (pretty (show x)))
+    AApply x y  -> renderDoc (pretty "AApply" <+> hardline <+> indent 2 (vsep [pretty (show x), pretty (show y)]))
     ANumber i   -> "ANumber " <> show i
     AString s   -> "AString " <> s
     AIdent s    -> "AIdent " <> s
+
+    where
+
+    renderDoc = render <<< layoutPretty defaultLayoutOptions
 
 
 instance foldableAST :: Foldable AST where
