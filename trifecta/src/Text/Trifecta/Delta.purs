@@ -2,6 +2,7 @@ module Text.Trifecta.Delta
   ( Delta(..)
   , class HasDelta, delta
   , class HasBytes, bytes
+  , prettyDelta
   , nextTab
   , rewind
   , near
@@ -15,9 +16,11 @@ import Data.Foldable (foldMap)
 import Data.Function (on)
 import Data.Generic.Rep (class Generic)
 import Data.Generic.Rep.Show (genericShow)
+import Data.Text.Prettyprint.Doc (Doc, annotate, pretty)
 import Data.Sequence.Internal (class Measured, measure)
 import Data.String as S
 import Data.String.CodeUnits as SCU
+import Text.Trifecta.Util.Pretty (AnsiStyle, bold, char)
 
 
 
@@ -125,6 +128,25 @@ instance hasDeltaString :: HasDelta String where
 
 instance hasDeltaFingerTree :: (Monoid v, Measured a v, HasDelta v) => HasDelta (FingerTree v a) where
   delta t = let x = measure t :: v in delta x
+
+
+prettyDelta :: Delta -> Doc AnsiStyle
+prettyDelta d = case d of
+  Columns c _         -> go interactive 0 c
+  Tab x y _           -> go interactive 0 (nextTab x + y)
+  Lines l c _ _       -> go interactive l c
+  Directed fn l c _ _ -> go fn l c
+  where
+  go
+    :: String -- Source description
+    -> Int    -- Line
+    -> Int    -- Column
+    -> Doc AnsiStyle
+  go source line' column'
+    = annotate bold (pretty source)
+      <> char ':' <> annotate bold (pretty (line'+1))
+      <> char ':' <> annotate bold (pretty (column'+1))
+  interactive = "(interactive)"
 
 
 -- | Retrieve the character offset within the current line from this 'Delta'.

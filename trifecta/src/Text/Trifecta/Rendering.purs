@@ -8,7 +8,6 @@ import Data.Array as A
 import Data.Array.NonEmpty as NEA
 import Data.Enum (fromEnum, toEnumWithDefaults)
 import Data.Foldable (class Foldable, foldlDefault, foldrDefault)
-import Data.Traversable (class Traversable, sequenceDefault)
 import Data.Function (on)
 import Data.Lazy (Lazy, defer, force)
 import Data.Lens (Lens', lens)
@@ -20,6 +19,7 @@ import Data.String as S
 import Data.String.CodeUnits as SCU
 import Data.Text.Prettyprint.Doc (Doc, align, annotate, fill, hcat, nesting, pretty, space, vsep, (<+>))
 import Data.Text.Prettyprint.Doc.Render.Terminal (color, bgColor)
+import Data.Traversable (class Traversable, sequenceDefault)
 import Data.Tuple (Tuple(..), fst, snd)
 import Effect.Exception.Unsafe (unsafeThrow)
 import Text.Trifecta.Delta (class HasBytes, class HasDelta, Delta(..), bytes, column, delta, near)

@@ -19,6 +19,7 @@ You can edit this file as you like.
   , "refs"
   , "sequences"
   , "st"
+  , "stringutils"
   , "test-unit"
   , "typeable"
   ]
