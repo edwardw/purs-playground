@@ -3,6 +3,9 @@ module Text.Trifecta.Delta
   , class HasDelta, delta
   , class HasBytes, bytes
   , nextTab
+  , rewind
+  , near
+  , column
   ) where
 
 import Prelude
@@ -37,6 +40,7 @@ data Delta
   | Directed String Int Int Int Int
 
 
+derive instance ordDelta :: Ord Delta
 derive instance genericDelta :: Generic Delta _
 
 
@@ -80,6 +84,18 @@ nextTab :: Int -> Int
 nextTab x = x + (8 - mod x 8)
 
 
+-- | Rewind a 'Delta' to the beginning of the line.
+rewind :: Delta -> Delta
+rewind (Lines n _ b d)      = Lines n 0 (b - d) 0
+rewind (Directed p n _ b d) = Directed p n 0 (b - d) 0
+rewind _                    = Columns 0 0
+
+
+-- | Should we show two things with a 'Delta' on the same line?
+near :: forall s t. HasDelta s => HasDelta t => s -> t -> Boolean
+near s t = rewind (delta s) == rewind (delta t)
+
+
 instance monoidDelta :: Monoid Delta where
   mempty = Columns 0 0
 
@@ -109,3 +125,12 @@ instance hasDeltaString :: HasDelta String where
 
 instance hasDeltaFingerTree :: (Monoid v, Measured a v, HasDelta v) => HasDelta (FingerTree v a) where
   delta t = let x = measure t :: v in delta x
+
+
+-- | Retrieve the character offset within the current line from this 'Delta'.
+column :: forall t. HasDelta t => t -> Int
+column t = case delta t of
+  Columns c _        -> c
+  Tab b a _          -> nextTab b + a
+  Lines _ c _ _      -> c
+  Directed _ _ c _ _ -> c

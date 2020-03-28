@@ -8,7 +8,7 @@ import Test.Unit (suite, test)
 import Test.Unit.Assert as Assert
 import Test.Unit.Main (runTest)
 import Text.Trifecta.Delta (Delta(..), delta)
-import Text.Trifecta.Internal.Rope (grabLine, grabRest, ropeS)
+import Text.Trifecta.Rope (grabLine, grabRest, ropeS)
 
 
 

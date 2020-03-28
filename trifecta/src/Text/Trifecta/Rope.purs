@@ -1,4 +1,4 @@
-module Text.Trifecta.Internal.Rope
+module Text.Trifecta.Rope
   ( Rope(..)
   , rope
   , ropeS
@@ -24,7 +24,7 @@ import Data.String.CodeUnits as SCU
 import Data.Tuple (Tuple(..))
 import Partial.Unsafe (unsafePartial)
 import Text.Trifecta.Delta (class HasBytes, class HasDelta, Delta, bytes, delta)
-import Text.Trifecta.Internal.Util as Util
+import Text.Trifecta.Util.Combinators as Util
 
 
 

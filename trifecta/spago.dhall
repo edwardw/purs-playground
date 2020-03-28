@@ -13,6 +13,7 @@ You can edit this file as you like.
   , "generics-rep"
   , "lists"
   , "node-process"
+  , "profunctor-lenses"
   , "proxy"
   , "psci-support"
   , "refs"

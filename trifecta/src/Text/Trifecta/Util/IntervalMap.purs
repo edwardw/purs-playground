@@ -1,4 +1,4 @@
-module Text.Trifecta.Internal.IntervalMap
+module Text.Trifecta.Util.IntervalMap
   ( Interval(..)
   , IntervalMap(..), Nd, singleton, insert
   , search, intersections, dominators
