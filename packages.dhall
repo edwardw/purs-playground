@@ -148,6 +148,42 @@ let additions =
       , version =
           "v2.1.0"
       }
+  , intmaps =
+      { dependencies =
+          [ "foldable-traversable"
+          , "functions"
+          , "integers"
+          , "prelude"
+          , "tuples"
+          ]
+      , repo =
+          "https://github.com/edwardw/purescript-intmaps.git"
+      , version =
+          "master"
+      }
+  , benchotron =
+      { dependencies =
+          [ "exceptions"
+          , "profunctor"
+          , "arrays"
+          , "exists"
+          , "lcg"
+          , "now"
+          , "foldable-traversable"
+          , "node-buffer"
+          , "node-fs"
+          , "transformers"
+          , "quickcheck"
+          , "strings"
+          , "identity"
+          , "datetime"
+          , "node-readline"
+          ]
+      , repo =
+          "https://github.com/hdgarrood/purescript-benchotron.git"
+      , version =
+          "v7.0.1"
+      }
   }
 
 in  upstream // overrides // additions
