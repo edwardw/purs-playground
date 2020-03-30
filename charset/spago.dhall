@@ -10,6 +10,7 @@ You can edit this file as you like.
   , "intmaps"
   , "ordered-collections"
   , "psci-support"
+  , "unordered-collections"
   ]
 , packages = ../packages.dhall
 , sources = [ "src/**/*.purs", "benchmarks/**/*.purs", "test/**/*.purs" ]
