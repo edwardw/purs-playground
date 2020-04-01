@@ -1,8 +1,13 @@
-module Data.CharSet where
+module Data.CharSet
+  ( CharSet(..)
+  , member
+  , fromFoldable
+  ) where
 
 import Prelude
 import Data.Array as A
 import Data.Enum (fromEnum)
+import Data.Foldable (class Foldable, foldr)
 import Data.HashSet (HashSet)
 import Data.HashSet as S
 import Data.Int.Bits (shr)
@@ -13,19 +18,20 @@ import Data.Tuple (Tuple(..))
 
 
 data CharSet = CharSet
-  Boolean             -- Whether ByteSet and HashSet are negated
-  (Array Boolean)     -- Set of head bytes
-                      -- fixed length array of 128 to hold all ASCII characters
-  (HashSet Int)       -- Set of CodePoint in the charset
+  Boolean         -- Whether Array and HashSet are negated
+  (Array Boolean) -- Set of head bytes
+                  -- fixed length array of 128 to look up ASCII characters
+  (HashSet Int)   -- Set of CodePoint in the charset
+                  -- CodePoint is not Hashable? That is a surprise.
 
 
-charSet :: Boolean -> Array CodePoint -> CharSet
+charSet :: forall f. Foldable f => Boolean -> f CodePoint -> CharSet
 charSet b cs = CharSet b
                        (A.updateAtIndices ts fs)
-                       (S.fromFoldable $ map fromEnum cs)
+                       (foldr (S.insert <<< fromEnum) S.empty cs)
   where
   fs = A.replicate 128 false
-  ts = map (\c -> Tuple (headBytes c) true) cs
+  ts = map (\c -> Tuple (headBytes c) true) (A.fromFoldable cs)
 
 
 headBytes :: CodePoint -> Int
@@ -37,16 +43,18 @@ headBytes c = case fromEnum c of
 
 
 complement :: CharSet -> CharSet
-complement = case _ of
-  CharSet true b s  -> CharSet false b s
-  CharSet false b s -> CharSet true b s
+complement (CharSet b a s) = CharSet (not b) a s
 
 
 member :: CodePoint -> CharSet -> Boolean
 member c cs = case cs of
-  CharSet true b s -> case fromEnum c of
-    i | i < 0x7f -> A.index b i == Just true
+  CharSet true a s -> case fromEnum c of
+    i | i < 0x7f -> A.index a i == Just true
     i            -> S.member i s
-  CharSet false b s -> case fromEnum c of
-    i | i < 0x7f -> A.index b i /= Just true
+  CharSet false a s -> case fromEnum c of
+    i | i < 0x7f -> A.index a i == Just false
     i            -> not $ S.member i s
+
+
+fromFoldable :: forall f. Foldable f => f CodePoint -> CharSet
+fromFoldable = charSet true
