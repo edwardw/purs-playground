@@ -1,5 +1,6 @@
 module Data.CharSet
   ( CharSet(..)
+  , complement
   , member
   , fromFoldable
   ) where

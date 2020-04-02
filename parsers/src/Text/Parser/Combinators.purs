@@ -1,15 +1,38 @@
-module Text.Parser.Combinators where
+module Text.Parser.Combinators
+  (
+    choice
+  , option
+  , skipOptional
+  , between
+  , surroundedBy
+  , sepBy
+  , sepBy1
+  , sepByNonEmpty
+  , sepEndBy1
+  , sepEndByNonEmpty
+  , sepEndBy
+  , endBy1
+  , endByNonEmpty
+  , endBy
+  , count
+  , chainl
+  , chainr
+  , chainl1
+  , chainr1
+  , manyTill
+  , class Parsing, try, nameParser, skipMany, skipSome, unexpected, eof, notFollowedBy, (<?>)
+  ) where
 
 import Prelude hiding (between)
 import Control.Alt ((<|>))
 import Control.Alternative (class Alternative)
-import Control.MonadPlus (class MonadPlus)
+import Control.Lazy (class Lazy)
 import Control.Monad.Reader (ReaderT(..))
 import Control.Monad.RWS (RWSResult(..), RWST(..))
 import Control.Monad.State (StateT(..))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Writer (WriterT(..))
-import Control.Lazy (class Lazy)
+import Control.MonadPlus (class MonadPlus)
 import Data.Array ((:))
 import Data.Array as A
 import Data.Array.NonEmpty as NEA
@@ -245,7 +268,7 @@ chainl1 :: forall m a. Alternative m => m a -> m (a -> a -> a) -> m a
 chainl1 p op = rst p op <*> p
   where
   rst :: m a -> m (a -> a -> a) -> m (a -> a)
-  rst p' op' = (\f y g x -> g (f x y)) <$> op'<*> p'<*> rst p' op'
+  rst p' op' = (\f y g x -> g (f x y)) <$> op' <*> p'<*> rst p' op'
            <|> pure identity
 
 

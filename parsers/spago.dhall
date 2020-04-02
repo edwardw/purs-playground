@@ -5,6 +5,7 @@ You can edit this file as you like.
 { name = "parsers"
 , dependencies =
   [ "arrays"
+  , "charset"
   , "console"
   , "control"
   , "effect"
@@ -12,6 +13,7 @@ You can edit this file as you like.
   , "nonempty"
   , "psci-support"
   , "transformers"
+  , "unicode"
   ]
 , packages = ../packages.dhall
 , sources = [ "src/**/*.purs", "test/**/*.purs" ]
